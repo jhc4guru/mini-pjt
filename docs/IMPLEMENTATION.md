@@ -43,6 +43,19 @@
 - **오류:** 예상치 못한 오류와 CLI 실행 불가는 모두 차단한다(fail-closed).
 - `서버`·`노드`는 모호 표현이 아니다(항상 EC2 인스턴스, D-31). 모호한 표현(`방화벽` 등 `ambiguous`)은 가드가 아니라 접수 단계(`planner/intake.py`)에서 처리한다: 서버가 탐지하고, READ 모델이 요청 속 근거 인용으로 후보를 고르면 서버가 (후보 목록 안, 근거가 마스킹된 요청에 실재하고 별칭 자체가 아님, 확신 high)를 검증해 해소로 인정하고, 아니면 되묻는다. 입력 가드 차단은 모델 호출 전에 거절, 모델 출력은 누출 검사 후 사용, 스키마 오류는 2회 재시도 후 `SchemaViolation`(사람에게 넘김). 결과(`IntakeResult`)는 proceed/clarify/reject와 해석·질문 목록을 담는다(D-30).
 
+### 계획 스키마 (`app/planner/schema.py`)
+- 모델은 `PlanDraft`(plan → phase → step 초안)만 만든다. 초안에는 읽기/변경 분류, 위험, 근거, 폴백, 영향이 없고(필드를 넣으면 스키마 오류), 서버가 `build_plan`에서 `CommandGuard.check` 판정으로 채워 `Plan`을 만든다. step 종류는 `cli`·`manual`·`iac`·`check`·`poll`이다.
+- 구조 규칙(위반 시 `PlanInvalid`, 코드 목록): 유일한 step id, `depends_on`·`check_for`는 앞선 step만 가리킴, 가드가 막은 명령 금지, 모델이 붙인 종류와 가드 판정 불일치 금지(예: `cli`인데 manual 명령), 변경 step마다 같은 phase 안에서 뒤따르는 확인 step(읽기), `poll`은 읽기 명령과 간격·최대 시간·완료 조건 필수, `iac`·`check`는 명령 없이 체크리스트, 모델 출력에 민감값이 있으면 거부, plan·phase당 step 상한.
+- `irreversible` step이 있는 phase는 서버가 게이트를 켜고 잠근다(`gate_locked`). 근거 없는(폴백) 명령은 `grounded=False`이고 읽기/변경과 무관하게 다른 사람의 승인이 필요하다(`Step.needs_other_approval`). 분류가 애매한 명령은 가드가 변경으로 분류한다.
+- `plan_hash`는 사용자에게 보이는 모든 내용(제목, 게이트, 롤백 포함)과 step 해시의 순서를 묶는다(승인 잠금, T6). 실제 값 복원본의 확인은 승인 엔진(T6)이 맡는다.
+
+### 계획 에이전트 (`app/planner/agent.py`, 프롬프트 `app/planner/prompts.py`, D-32)
+- 흐름: `IntakeResult`(proceed) → 읽기 도구로 조사(`search_docs`, `lookup_inventory`, `run_read_command`) → `submit_outline`(phase 윤곽) 또는 `request_clarification` → phase마다 `submit_phase` → 서버가 지금까지의 계획을 `build_plan`으로 검증하고 오류 코드를 돌려줘 수정(단계당 2회) → `PlanResult`(`plan` | `clarify` | `stopped`).
+- 제출 통로 3개는 아무것도 실행하지 않는다(읽기 전용 도구 집합과 별개). 목록 밖 도구 이름, 단계에 맞지 않는 제출, 평문 답변(2회 재요청 후 중단)은 오류로 돌려주고 수정 기회를 소모한다.
+- 중단 코드(`stopped.reasons`): `model_output_unsafe`(출력에 실제 값, 재시도 없음), `repair_exhausted`, `output_truncated`, `no_submission`, `llm_unavailable`, `leak_blocked`, 상한(`steps_exceeded`, `tool_calls_exceeded`, `repeated_call`, `tokens_exceeded`, `time_exceeded`). 판정은 감사 기록에 남고 입력 텍스트는 없다.
+- `LLMClient.chat`: 여러 턴·도구 호출 대화. 발송 전에 시스템·메시지·도구 결과·도구 입력·도구 정의 전체를 누출 검사하고, MAIN→SUB 폴백과 토큰 합산은 `complete`와 같은 경로다. 출력 한도 8,192 토큰.
+- 시스템 프롬프트는 역할·입력(마스킹)·고정 사실(서버·노드=EC2, Pod, 운영 환경)·도구와 한도·작업 순서·step 규칙·서버 오류 코드·출력 형식으로 구성된다. 금지 옵션, `--timeout` 필수 명령, 한도, step 상한은 가드 상수에서 채우고 테스트가 대조한다. manual 명령 목록은 문서와 대조한다.
+
 ## 2. 검색 구성 (구현: `app/rag/`, 진입점 `app/rag/factory.py`)
 - **chunk:** 명령 하나(141개). 텍스트에 문서 제목, 실행 형태, 종류·위험도·영향 요약, 본문(설명·키워드·예시·주의)을 넣고 메타데이터(cli, service, kind, risk, guard)를 함께 저장한다.
 - **BM25:** kiwipiepy 한국어 형태소 + 영문 CLI 복합 토큰(`create-security-group`, `--group-id`). 플레이스홀더는 제거한다.

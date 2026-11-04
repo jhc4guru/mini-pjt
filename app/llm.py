@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -42,6 +43,46 @@ class LLMResult:
         return self.requested_role != self.actual_role
 
 
+@dataclass(frozen=True)
+class ChatResult:
+    content: list[dict]                 # Converse 응답 블록(text, toolUse)
+    stop_reason: str
+    requested_role: str
+    actual_role: str
+    model_id: str
+    input_tokens: int
+    output_tokens: int
+
+    @property
+    def fell_back(self) -> bool:
+        return self.requested_role != self.actual_role
+
+    @property
+    def text(self) -> str:
+        return "".join(b.get("text", "") for b in self.content)
+
+    @property
+    def tool_uses(self) -> list[dict]:
+        return [b["toolUse"] for b in self.content if "toolUse" in b]
+
+
+def flatten_text(system: str | None, messages: list[dict], tools: list[dict] | None = None) -> str:
+    """누출 검사용: 모델로 나가는 모든 텍스트(시스템, 메시지의 text·toolUse 입력·toolResult, 도구 설명)."""
+    parts: list[str] = [system or ""]
+    for m in messages:
+        for b in m.get("content", []):
+            if "text" in b:
+                parts.append(b["text"])
+            elif "toolUse" in b:
+                parts.append(json.dumps(b["toolUse"].get("input", {}), ensure_ascii=False))
+            elif "toolResult" in b:
+                for c in b["toolResult"].get("content", []):
+                    parts.append(c["text"] if "text" in c else json.dumps(c.get("json", {}), ensure_ascii=False))
+    if tools:
+        parts.append(json.dumps(tools, ensure_ascii=False))
+    return "\n".join(parts)
+
+
 def _error_code(exc: BaseException) -> str:
     resp = getattr(exc, "response", None)
     if isinstance(resp, dict):
@@ -68,33 +109,48 @@ class LLMClient:
         self, role: str, user: str, *, system: str | None = None, max_tokens: int = 1024,
         temperature: float = 0.0, session_id: str | None = None,
     ) -> LLMResult:
+        r = self._dispatch(role, [{"role": "user", "content": [{"text": user}]}], system, None, max_tokens, temperature, session_id)
+        text = "".join(c.get("text", "") for c in r.content)
+        return LLMResult(text, r.requested_role, r.actual_role, r.model_id, r.input_tokens, r.output_tokens)
+
+    def chat(
+        self, role: str, messages: list[dict], *, system: str | None = None, tools: list[dict] | None = None,
+        max_tokens: int = 1024, temperature: float = 0.0, session_id: str | None = None,
+    ) -> ChatResult:
+        """여러 턴·도구 호출(Converse toolConfig)이 있는 대화 한 번. 검사·폴백·예산은 `complete`와 같은 경로를 쓴다."""
+        return self._dispatch(role, messages, system, tools, max_tokens, temperature, session_id)
+
+    # ---- 내부 ----
+    def _dispatch(self, role, messages, system, tools, max_tokens, temperature, session_id) -> ChatResult:
         role = role.upper()
         if role not in ROLES:
             raise ValueError(f"알 수 없는 역할: {role}")
         # 마스킹이 끝난 텍스트만 나간다. 누출이면 LeakError로 멈춘다(재시도하지 않는다).
-        assert_outbound_clean(f"{system or ''}\n{user}", self._masker, f"llm:{role}")
+        assert_outbound_clean(flatten_text(system, messages, tools), self._masker, f"llm:{role}")
         try:
-            return self._call_with_retry(role, role, user, system, max_tokens, temperature)
+            return self._call_with_retry(role, role, messages, system, tools, max_tokens, temperature)
         except _Throttled:
             if role != "MAIN":
                 raise LLMUnavailable(f"{role} 모델이 쓰로틀링 중이라 중단한다") from None
         # MAIN → SUB 폴백(한 방향, 같은 입력, 같은 검사)
         self._log(session_id, True, ("llm_fallback:MAIN->SUB",))
         try:
-            return self._call_with_retry(role, "SUB", user, system, max_tokens, temperature)
+            return self._call_with_retry(role, "SUB", messages, system, tools, max_tokens, temperature)
         except _Throttled:
             self._log(session_id, False, ("llm_unavailable:MAIN,SUB",))
             raise LLMUnavailable("MAIN과 SUB 모델이 모두 쓰로틀링 중이라 중단한다") from None
 
-    def _call_with_retry(self, requested: str, actual: str, user, system, max_tokens, temperature) -> LLMResult:
+    def _call_with_retry(self, requested: str, actual: str, messages, system, tools, max_tokens, temperature) -> ChatResult:
         model_id = config.model_id(actual)
         body = {
             "modelId": model_id,
-            "messages": [{"role": "user", "content": [{"text": user}]}],
+            "messages": messages,
             "inferenceConfig": {"temperature": temperature, "maxTokens": max_tokens},
         }
         if system:
             body["system"] = [{"text": system}]
+        if tools:
+            body["toolConfig"] = {"tools": tools}
         for attempt in range(MAX_RETRIES + 1):
             try:
                 r = self._client.converse(**body)
@@ -110,8 +166,7 @@ class LLMClient:
             in_t, out_t = int(usage.get("inputTokens", 0)), int(usage.get("outputTokens", 0))
             if self._budget is not None:
                 self._budget.add_tokens(in_t + out_t)
-            text = "".join(c.get("text", "") for c in r["output"]["message"]["content"])
-            return LLMResult(text, requested, actual, model_id, in_t, out_t)
+            return ChatResult(list(r["output"]["message"]["content"]), str(r.get("stopReason", "")), requested, actual, model_id, in_t, out_t)
         raise _Throttled  # 도달하지 않는다
 
     def _log(self, session_id, allowed: bool, reasons: tuple[str, ...]) -> None:

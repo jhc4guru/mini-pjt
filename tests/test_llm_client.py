@@ -109,3 +109,17 @@ def test_unknown_role_is_rejected():
     c, _ = make({})
     with pytest.raises(ValueError):
         c.complete("BIG", "x")
+
+
+def test_chat_sends_tools_and_blocks_leaks_inside_tool_results():
+    from app.llm import ChatResult
+    c, _ = make({"m-main": ["ok"]})
+    msgs = [{"role": "user", "content": [{"text": "x"}]}]
+    r = c.chat("MAIN", msgs, system="sys", tools=[{"toolSpec": {"name": "t", "description": "d", "inputSchema": {"json": {"type": "object"}}}}])
+    assert isinstance(r, ChatResult) and r.text == "ok" and r.tool_uses == []
+    leaky = [{"role": "user", "content": [{"toolResult": {"toolUseId": "1", "content": [{"json": {"output": "sg-0123456789abcdef0"}}]}}]}]
+    with pytest.raises(LeakError):
+        c.chat("MAIN", leaky)
+    leaky_use = [{"role": "assistant", "content": [{"toolUse": {"toolUseId": "1", "name": "t", "input": {"q": "sg-0123456789abcdef0"}}}]}]
+    with pytest.raises(LeakError):
+        c.chat("MAIN", leaky_use)
