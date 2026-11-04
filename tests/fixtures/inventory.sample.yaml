@@ -1,0 +1,11 @@
+# 테스트용 샘플 인벤토리. 실제 환경 값이 아니다.
+# 실제 인벤토리는 data/inventory.yaml(버전 관리 제외)에 두고 INVENTORY_FILE로 지정한다.
+names:
+  CLUSTER: [prod-db, dev-main]
+  NODEGROUP: [ng-blue, ng-green]
+  ASG: [eks-workers-a]
+  BUCKET: [acme-logs, acme-artifacts]
+  ROLE: [eks-node-role, deploy-role]
+  USER: [alice-admin]
+  NAMESPACE: [payments, default]   # default는 마스킹하지 않는다(NEVER_MASK)
+prod: [acme-artifacts]

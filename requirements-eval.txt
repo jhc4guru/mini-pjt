@@ -1,0 +1,5 @@
+# 평가 전용 환경(.venv-eval)용. 앱 런타임(.venv)에는 설치하지 않는다.
+# 이유: ragas가 tenacity, rich, fsspec 등 런타임 패키지를 다운그레이드하고 openai, pandas, datasets를 끌어온다.
+# 생성: python -m venv .venv-eval  →  .venv-eval\Scripts\python.exe -m pip install -r requirements-eval.txt
+-r requirements.txt
+ragas

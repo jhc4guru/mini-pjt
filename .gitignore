@@ -1,0 +1,21 @@
+# 비밀값: 절대 커밋하지 않는다 (.env에 Bedrock용 실제 AWS 키가 있다)
+.env
+.env.*
+!.env.example
+
+# 가상환경
+.venv/
+.venv-eval/
+
+# 실행 중 생성물 (지워도 재생성된다)
+data/
+eval/reports/
+
+# 파이썬
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# 에디터
+.idea/
+.vscode/

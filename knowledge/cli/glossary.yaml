@@ -1,0 +1,124 @@
+# 용어 사전. 사용자 표현(aliases)을 표준 영어 용어(canonical)로 바꾼다.
+# 용도: (1) 질의 정규화 프롬프트에 주입 (2) BM25 쿼리 확장.
+# 규칙: 새 서비스를 추가하면 여기에 동의어를 함께 추가한다. aliases는 소문자로 비교한다.
+
+entities:
+  - canonical: Security Group
+    cli: aws ec2
+    aliases: [sg, securitygroup, security group, security-group, 시큐리티그룹, 시큐리티 그룹, 보안그룹, 보안 그룹, 방화벽 그룹]
+  - canonical: Ingress Rule
+    cli: aws ec2
+    aliases: [inbound, inbound rule, ingress, 인바운드, 인바운드 규칙, 들어오는 트래픽, 수신 규칙]
+  - canonical: Egress Rule
+    cli: aws ec2
+    aliases: [outbound, outbound rule, egress, 아웃바운드, 아웃바운드 규칙, 나가는 트래픽, 송신 규칙]
+  - canonical: CIDR
+    cli: aws ec2
+    aliases: [cidr, ip 대역, 아이피 대역, 대역, 서브넷 마스크]
+  - canonical: EC2 Instance
+    cli: aws ec2
+    aliases: [ec2, instance, 인스턴스, 서버, 노드, 워커 노드, vm, 가상머신]   # 서버·노드는 항상 EC2 인스턴스(D-31). 모호 표현이 아니다
+  - canonical: VPC
+    cli: aws ec2
+    aliases: [vpc, 브이피씨, 가상 네트워크]
+  - canonical: Subnet
+    cli: aws ec2
+    aliases: [subnet, 서브넷]
+  - canonical: EKS Cluster
+    cli: aws eks
+    aliases: [eks, 이케이에스, 클러스터, k8s 클러스터, 쿠버네티스 클러스터]
+  - canonical: Node Group
+    cli: aws eks
+    aliases: [nodegroup, node group, 노드그룹, 노드 그룹, 워커 노드 그룹]
+  - canonical: kubeconfig
+    cli: aws eks
+    aliases: [kubeconfig, 쿠브컨피그, kubectl 접속 설정, 접속 설정]
+  - canonical: S3 Bucket
+    cli: aws s3
+    aliases: [s3, bucket, 버킷, 에스쓰리]
+  - canonical: S3 Object
+    cli: aws s3
+    aliases: [object, 객체, 오브젝트, 파일, 키]
+  - canonical: Bucket Policy
+    cli: aws s3api
+    aliases: [bucket policy, 버킷 정책, 버킷 폴리시]
+  - canonical: Public Access Block
+    cli: aws s3api
+    aliases: [public access block, 퍼블릭 액세스 차단, 퍼블릭 차단, 외부 공개 차단, 공개 차단]
+  - canonical: Versioning
+    cli: aws s3api
+    aliases: [versioning, 버저닝, 버전 관리, 버전닝]
+  - canonical: IAM Role
+    cli: aws iam
+    aliases: [role, iam role, 롤, 역할, 아이엠 롤]
+  - canonical: IAM Policy
+    cli: aws iam
+    aliases: [policy, iam policy, 정책, 폴리시, 권한 정책]
+  - canonical: IAM User
+    cli: aws iam
+    aliases: [iam user, user, 유저, 사용자, iam 사용자]
+  - canonical: Access Key
+    cli: aws iam
+    aliases: [access key, 액세스 키, 엑세스 키, 키 페어]
+  - canonical: Namespace
+    cli: kubectl
+    aliases: [namespace, ns, 네임스페이스]
+  - canonical: Pod
+    cli: kubectl
+    aliases: [pod, pods, 파드]
+  - canonical: Deployment
+    cli: kubectl
+    aliases: [deployment, deploy, 디플로이먼트, 배포]
+  - canonical: Service
+    cli: kubectl
+    aliases: [svc, k8s service, 쿠버네티스 서비스]
+  - canonical: Node
+    cli: kubectl
+    aliases: [node, nodes, 노드, 워커 노드]   # 쿠버네티스에서 본 같은 인스턴스(상태·drain·cordon·top node). '노드'는 EC2 항목에도 있다(D-31)
+  - canonical: Rollout
+    cli: kubectl
+    aliases: [rollout, 롤아웃, 롤링 업데이트]
+
+actions:
+  - canonical: list/describe (read)
+    aliases: [조회, 목록, 확인, 보여줘, 알려줘, 상태, 리스트, list, show, describe, get, check]
+  - canonical: create
+    aliases: [생성, 만들어, 만들기, 추가, 신규, create, add, new]
+  - canonical: delete
+    aliases: [삭제, 지워, 제거, 없애, delete, remove, destroy, terminate]
+  - canonical: authorize (open)
+    aliases: [열어, 열기, 오픈, 허용, 접속 허용, open, allow, authorize]
+  - canonical: revoke (close)
+    aliases: [닫아, 닫기, 차단, 막아, 허용 해제, close, block, revoke, deny]
+  - canonical: start
+    aliases: [시작, 켜, 켜기, 기동, start, boot, power on]
+  - canonical: stop
+    aliases: [중지, 끄, 끄기, 정지, stop, shutdown, power off]
+  - canonical: restart
+    aliases: [재시작, 재기동, 리부트, 다시 시작, restart, reboot]
+  - canonical: scale
+    aliases: [스케일, 늘려, 줄여, 개수 변경, 레플리카, scale, replicas]
+  - canonical: rollback
+    aliases: [롤백, 되돌려, 이전 버전, rollback, undo]
+  - canonical: attach policy
+    aliases: [권한 부여, 정책 연결, 권한 줘, attach policy, grant]
+  - canonical: detach policy
+    aliases: [권한 회수, 정책 해제, 권한 빼, detach policy, revoke permission]
+
+# 하나의 표현이 여러 대상을 가리킬 수 있는 경우. 임의로 고르지 않고 사용자에게 되묻는다.
+ambiguous:
+  - alias: 방화벽
+    candidates: [Security Group, Network ACL]
+    note: "Network ACL은 현재 문서 범위 밖. 보통 Security Group을 뜻하지만 사용자에게 확인한다."
+  - alias: 권한
+    candidates: [IAM Policy, IAM Role, kubectl auth can-i]
+    note: "IAM 권한 부여인지 쿠버네티스 권한 확인인지 확인한다."
+  - alias: 삭제 (대상 없음)
+    candidates: []
+    note: "대상이 없으면 되묻는다. 삭제는 항상 대상을 명시해야 한다."
+  - alias: 서비스
+    candidates: [Service (kubectl), AWS 서비스]
+    note: "쿠버네티스 Service 리소스인지 AWS 서비스를 뜻하는지 확인한다."
+  - alias: 키
+    candidates: [Access Key, S3 Object Key]
+    note: "IAM 액세스 키는 restricted(create-access-key)이므로 객체 키와 구분해서 확인한다."

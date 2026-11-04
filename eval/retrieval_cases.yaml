@@ -1,0 +1,98 @@
+# 검색 평가 케이스. 질의는 마스킹된 형태(플레이스홀더)만 쓴다. 실제 값 금지.
+# expect: 정답으로 인정하는 chunk id 목록(앞쪽이 가장 적합). 하나라도 상위 k에 있으면 적중.
+# tags: syn(동의어·약어) en(영어) colloquial(구어) ambiguous(모호 표현) manual(서버 미실행 명령) multi(복수 정답 가능)
+
+cases:
+  # ---- EC2 보안 그룹 ----
+  - {id: r01, q: "<SG_1> 인바운드 443 열어줘", expect: ["aws:ec2:authorize-security-group-ingress"], tags: [syn]}
+  - {id: r02, q: "시큐리티그룹에 22번 포트 허용 추가", expect: ["aws:ec2:authorize-security-group-ingress"], tags: [syn]}
+  - {id: r03, q: "방화벽 80 포트 오픈해줘", expect: ["aws:ec2:authorize-security-group-ingress"], tags: [syn, ambiguous]}
+  - {id: r04, q: "sg에서 443 허용해", expect: ["aws:ec2:authorize-security-group-ingress"], tags: [syn, colloquial]}
+  - {id: r05, q: "open port 8080 on the security group", expect: ["aws:ec2:authorize-security-group-ingress"], tags: [en]}
+  - {id: r06, q: "보안그룹 인바운드 규칙 삭제해줘", expect: ["aws:ec2:revoke-security-group-ingress"], tags: [syn]}
+  - {id: r07, q: "포트 22 닫아줘 <SG_1>", expect: ["aws:ec2:revoke-security-group-ingress"], tags: [colloquial]}
+  - {id: r08, q: "SG 아웃바운드 규칙 추가", expect: ["aws:ec2:authorize-security-group-egress"], tags: [syn]}
+  - {id: r09, q: "아웃바운드 허용 제거", expect: ["aws:ec2:revoke-security-group-egress"], tags: [syn]}
+  - {id: r10, q: "<VPC_1>에 보안그룹 새로 만들어줘", expect: ["aws:ec2:create-security-group"], tags: [syn]}
+  - {id: r11, q: "<SG_1> 보안그룹 지워줘", expect: ["aws:ec2:delete-security-group"], tags: [colloquial]}
+  - {id: r12, q: "보안그룹 목록 보여줘", expect: ["aws:ec2:describe-security-groups"], tags: [syn]}
+  - {id: r13, q: "<SG_1> 규칙 확인", expect: ["aws:ec2:describe-security-group-rules", "aws:ec2:describe-security-groups"], tags: [multi]}
+  # ---- EC2 인스턴스·네트워크·템플릿 ----
+  - {id: r14, q: "서버 목록 조회", expect: ["aws:ec2:describe-instances"], tags: [syn]}
+  - {id: r15, q: "<INSTANCE_1> 중지해줘", expect: ["aws:ec2:stop-instances"], tags: [colloquial]}
+  - {id: r16, q: "인스턴스 재시작", expect: ["aws:ec2:reboot-instances"], tags: [syn]}
+  - {id: r17, q: "<INSTANCE_1> 켜줘", expect: ["aws:ec2:start-instances"], tags: [colloquial]}
+  - {id: r18, q: "인스턴스 삭제 <INSTANCE_1>", expect: ["aws:ec2:terminate-instances"], tags: [syn]}
+  - {id: r19, q: "EC2 인스턴스 새로 생성", expect: ["aws:ec2:run-instances"], tags: [syn]}
+  - {id: r20, q: "VPC 목록", expect: ["aws:ec2:describe-vpcs"], tags: [syn]}
+  - {id: r21, q: "서브넷 여유 IP 확인", expect: ["aws:ec2:describe-subnets"], tags: [syn]}
+  - {id: r22, q: "이 보안그룹을 쓰는 리소스가 있는지 확인", expect: ["aws:ec2:describe-network-interfaces"], tags: [colloquial]}
+  - {id: r23, q: "launch template 현재 AMI 확인", expect: ["aws:ec2:describe-launch-template-versions", "aws:ec2:describe-launch-templates"], tags: [en, multi]}
+  # ---- EKS ----
+  - {id: r24, q: "EKS 클러스터 목록", expect: ["aws:eks:list-clusters"], tags: [syn]}
+  - {id: r25, q: "<CLUSTER_1> 클러스터 버전 확인", expect: ["aws:eks:describe-cluster"], tags: [syn]}
+  - {id: r26, q: "클러스터를 1.36으로 업그레이드", expect: ["aws:eks:update-cluster-version"], tags: [syn]}
+  - {id: r27, q: "EKS 업그레이드 전에 사전 점검 인사이트 확인", expect: ["aws:eks:list-insights"], tags: [syn]}
+  - {id: r28, q: "클러스터 업그레이드 진행 상태", expect: ["aws:eks:describe-update", "aws:eks:list-updates"], tags: [multi]}
+  - {id: r29, q: "<CLUSTER_1> kubeconfig 설정해줘", expect: ["aws:eks:update-kubeconfig"], tags: [syn]}
+  - {id: r30, q: "설치된 애드온 목록", expect: ["aws:eks:list-addons"], tags: [syn]}
+  - {id: r31, q: "coredns 애드온 1.36 호환 버전 조회", expect: ["aws:eks:describe-addon-versions"], tags: [syn]}
+  - {id: r32, q: "kube-proxy 애드온 업데이트", expect: ["aws:eks:update-addon"], tags: [syn]}
+  - {id: r33, q: "노드 AMI 최신 권장 이미지 ID 조회", expect: ["aws:ssm:get-parameter"], tags: [syn]}
+  # ---- Auto Scaling ----
+  - {id: r34, q: "ASG 상태 확인 <NAME_1>", expect: ["aws:autoscaling:describe-auto-scaling-groups"], tags: [syn]}
+  - {id: r35, q: "노드 롤링 교체 시작", expect: ["aws:autoscaling:start-instance-refresh"], tags: [syn]}
+  - {id: r36, q: "인스턴스 리프레시 진행률", expect: ["aws:autoscaling:describe-instance-refreshes"], tags: [syn]}
+  - {id: r37, q: "ASG 최대 노드 수를 늘려줘", expect: ["aws:autoscaling:update-auto-scaling-group", "aws:autoscaling:set-desired-capacity"], tags: [colloquial, multi]}
+  - {id: r38, q: "희망 용량 4로 변경", expect: ["aws:autoscaling:set-desired-capacity"], tags: [syn]}
+  - {id: r39, q: "AZRebalance 프로세스 중지", expect: ["aws:autoscaling:suspend-processes"], tags: [syn]}
+  # ---- S3 ----
+  - {id: r40, q: "버킷 목록 보여줘", expect: ["aws:s3:ls", "aws:s3api:list-buckets"], tags: [syn, multi]}
+  - {id: r41, q: "<BUCKET_1> 안의 파일 목록", expect: ["aws:s3:ls", "aws:s3api:list-objects-v2"], tags: [syn, multi]}
+  - {id: r42, q: "버킷 하나 만들어줘", expect: ["aws:s3:mb"], tags: [colloquial]}
+  - {id: r43, q: "버킷 폴더 통째로 삭제", expect: ["aws:s3:rm"], tags: [colloquial]}
+  - {id: r44, q: "두 버킷 동기화", expect: ["aws:s3:sync"], tags: [syn]}
+  - {id: r45, q: "버킷 정책 확인", expect: ["aws:s3api:get-bucket-policy"], tags: [syn]}
+  - {id: r46, q: "버킷 퍼블릭 액세스 차단 설정 켜줘", expect: ["aws:s3api:put-public-access-block"], tags: [syn]}
+  - {id: r47, q: "버킷 버저닝 켜줘", expect: ["aws:s3api:put-bucket-versioning"], tags: [syn]}
+  - {id: r48, q: "버킷 암호화 설정 확인", expect: ["aws:s3api:get-bucket-encryption"], tags: [syn]}
+  # ---- IAM ----
+  - {id: r49, q: "<ROLE_1> 역할에 정책 연결", expect: ["aws:iam:attach-role-policy"], tags: [syn]}
+  - {id: r50, q: "역할 권한 회수", expect: ["aws:iam:detach-role-policy"], tags: [syn]}
+  - {id: r51, q: "새 IAM 롤 생성", expect: ["aws:iam:create-role"], tags: [syn]}
+  - {id: r52, q: "<ROLE_1>에 붙은 정책 목록", expect: ["aws:iam:list-attached-role-policies"], tags: [syn]}
+  - {id: r53, q: "정책 내용 확인 <POLICY_ARN_1>", expect: ["aws:iam:get-policy-version", "aws:iam:get-policy"], tags: [multi]}
+  - {id: r54, q: "IAM 사용자 목록", expect: ["aws:iam:list-users"], tags: [syn]}
+  - {id: r55, q: "오래된 액세스 키 점검", expect: ["aws:iam:list-access-keys"], tags: [syn]}
+  - {id: r56, q: "<USER_1> 액세스 키 발급해줘", expect: ["aws:iam:create-access-key"], tags: [syn, manual]}
+  - {id: r57, q: "콘솔 비밀번호 설정", expect: ["aws:iam:create-login-profile"], tags: [syn, manual]}
+  # ---- kubectl ----
+  - {id: r58, q: "<NAMESPACE_1> 파드 목록 조회", expect: ["kubectl:kubectl:get"], tags: [syn]}
+  - {id: r59, q: "파드 로그 확인", expect: ["kubectl:kubectl:logs"], tags: [syn]}
+  - {id: r60, q: "파드가 왜 안 뜨는지 상세 확인", expect: ["kubectl:kubectl:describe", "kubectl:kubectl:events"], tags: [colloquial, multi]}
+  - {id: r61, q: "배포 상태 확인", expect: ["kubectl:kubectl:rollout status"], tags: [syn]}
+  - {id: r62, q: "디플로이먼트 재시작", expect: ["kubectl:kubectl:rollout restart"], tags: [syn]}
+  - {id: r63, q: "이전 버전으로 롤백", expect: ["kubectl:kubectl:rollout undo"], tags: [syn]}
+  - {id: r64, q: "파드 수 3개로 늘려줘", expect: ["kubectl:kubectl:scale"], tags: [colloquial]}
+  - {id: r65, q: "점검 전에 노드 비워줘", expect: ["kubectl:kubectl:drain"], tags: [colloquial]}
+  - {id: r66, q: "노드 스케줄링 막기", expect: ["kubectl:kubectl:cordon"], tags: [syn]}
+  - {id: r67, q: "파드 안에 쉘 접속", expect: ["kubectl:kubectl:exec"], tags: [syn, manual]}
+  - {id: r68, q: "파드 포트를 로컬로 연결", expect: ["kubectl:kubectl:port-forward"], tags: [syn, manual]}
+  - {id: r69, q: "네임스페이스 만들어줘", expect: ["kubectl:kubectl:create"], tags: [syn]}
+  - {id: r70, q: "매니페스트 yaml 적용", expect: ["kubectl:kubectl:apply"], tags: [syn]}
+  - {id: r71, q: "이미지 버전 바꿔서 배포", expect: ["kubectl:kubectl:set image"], tags: [colloquial]}
+  - {id: r72, q: "쿠버네티스 서버 버전 확인", expect: ["kubectl:kubectl:version"], tags: [syn]}
+  - {id: r73, q: "지금 어느 클러스터에 붙어 있는지", expect: ["kubectl:kubectl:config current-context"], tags: [colloquial]}
+  - {id: r74, q: "노드 CPU 메모리 사용량", expect: ["kubectl:kubectl:top node"], tags: [syn]}
+  # ---- 영어 ----
+  - {id: r75, q: "restart the deployment", expect: ["kubectl:kubectl:rollout restart"], tags: [en]}
+  - {id: r76, q: "scale deployment to 3 replicas", expect: ["kubectl:kubectl:scale"], tags: [en]}
+  - {id: r77, q: "show pod logs", expect: ["kubectl:kubectl:logs"], tags: [en]}
+  - {id: r78, q: "create an IAM role", expect: ["aws:iam:create-role"], tags: [en]}
+  - {id: r79, q: "list s3 buckets", expect: ["aws:s3:ls", "aws:s3api:list-buckets"], tags: [en, multi]}
+  - {id: r80, q: "start an instance refresh on the autoscaling group", expect: ["aws:autoscaling:start-instance-refresh"], tags: [en]}
+  - {id: r81, q: "노드 상태 확인해줘", expect: ["kubectl:kubectl:get", "kubectl:kubectl:describe"], tags: [colloquial, multi]}
+  - {id: r82, q: "노드 Ready 상태 보여줘", expect: ["kubectl:kubectl:get"], tags: [colloquial]}
+  - {id: r83, q: "노드 상세 정보와 이벤트 확인", expect: ["kubectl:kubectl:describe"], tags: [syn]}
+  - {id: r84, q: "노드 인스턴스 상태 점검 결과 확인", expect: ["aws:ec2:describe-instance-status"], tags: [syn]}
+  - {id: r85, q: "서버 상태 점검 확인해줘", expect: ["aws:ec2:describe-instance-status", "aws:ec2:describe-instances"], tags: [colloquial, multi]}

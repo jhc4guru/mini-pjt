@@ -1,0 +1,33 @@
+
+boto3
+python-dotenv
+
+langchain
+langchain-aws
+langchain-community
+langchain-classic
+langchain-text-splitters
+
+langchain-chroma
+rank-bm25
+kiwipiepy
+
+langgraph-checkpoint-sqlite
+langgraph-supervisor
+
+mcp==1.30.0
+fastmcp==2.13.0
+langchain-mcp-adapters==0.3.2
+
+# Plan/Apply 에이전트 (웹 서버, mock 실행)
+fastapi
+uvicorn[standard]
+moto[server]
+cryptography   # 마스킹 매핑 암호화 저장 (D-29)
+
+# 검색·테스트
+pyyaml
+pytest
+
+# 관측 (개발 단계 한정, 마스킹 경계 이후 데이터만 전송. docs/IMPLEMENTATION.md 3절 "트레이스 경계" 참조)
+langfuse
