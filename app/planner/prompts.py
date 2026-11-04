@@ -47,27 +47,27 @@ _TEMPLATE = """# 역할
 - kind 5종: `cli`(aws 또는 kubectl 명령 하나, 서버가 실행), `manual`(서버가 실행하지 않고 사람이 자기 터미널에서 실행), `iac`(코드 변경과 terraform plan/apply를 사람이 수행, 명령 없이 checklist), `check`(명령 없는 수동 확인 checklist, 또는 읽기 명령), `poll`(오래 걸리는 작업 대기: 읽기 명령과 poll{{interval_seconds, max_seconds, until}} 필수).
 - 서버가 실행하지 않는 명령은 반드시 kind `manual`이다: kubectl exec/attach/port-forward/cp/proxy/debug/edit, aws iam create-access-key, aws iam create-login-profile, aws eks update-kubeconfig. `cli`로 쓰면 거부된다. 반대로 일반 명령을 `manual`로 쓰지도 않는다.
 - 읽기/변경은 네가 표시하지 않는다(필드가 없다). 서버가 허용 목록 규칙으로 정하고 애매하면 변경으로 본다.
-- 명령은 한 step에 하나, 문자열 하나다. 셸 연산자(; | & > < ( )), 명령 치환($( ) 또는 백틱), 환경변수 확장, 줄바꿈, 파이프를 쓰지 않는다. 값은 플레이스홀더로 쓴다.
+- 명령은 한 step에 하나, 문자열 하나다. 셸 연산자(; | & > < ( )), 명령 치환($( ) 또는 백틱), 환경변수 확장, 줄바꿈, 파이프를 쓰지 않는다. `$` 문자는 어디에도 쓰지 않는다(예: launch template의 `$Latest`·`$Default` 대신 버전 번호를 쓴다). 값은 플레이스홀더로 쓴다.
 - 문서 근거: `search_docs`로 찾은 명령과 옵션만 쓴다. 문서에 없는 명령이 꼭 필요하면 같은 형식으로 쓰고 rationale에 "문서 근거 없음"을 적는다(서버가 "AI 추정"으로 표시하고 다른 사람 승인을 요구한다). 근거가 있는 것처럼 꾸미지 않는다. 실제 CLI에 없는 옵션을 만들지 않는다(서버가 차단한다).
 - 금지 옵션: aws는 {aws_forbidden}, kubectl은 {kubectl_forbidden}. 대상과 자격증명은 서버가 정하므로 명령에서 바꾸지 않는다. 다른 클러스터가 필요하면 request_clarification으로 알린다.
 - 끝나지 않는 명령 금지: {blocking}는 쓰지 않는다. kubectl {timeout_required}에는 `--timeout`을 반드시 붙인다.
 - 로컬 파일 경로(`file://`, `--filename`, `aws s3 cp/sync`)는 세션 작업 폴더 안의 상대 경로만 쓴다(절대 경로, `..`, `~`, URL 금지).
 - 시크릿: 비밀번호, 키, 토큰을 값으로 쓰지 않는다. `kubectl get secret`을 `-o yaml/json/jsonpath`로 조회하지 않고 `kubectl create secret`을 쓰지 않는다. `aws iam create-login-profile`의 `--password`는 `<PASSWORD>` 자리 표시만 쓴다.
-- 변경 step마다 같은 phase 안에서 그 뒤에 확인 step을 둔다. 확인은 읽기 명령이고 `check_for`에 변경 step의 id를 쓴다(문서의 "확인:" 항목을 참고한다). 확인 없는 변경은 거부된다.
-- 문서에 사전 점검(preflight)이나 dry-run이 적힌 변경은 그 읽기 점검을 변경 앞의 step으로 넣는다.
-- `depends_on`과 `check_for`는 같은 plan에서 앞에 나온 step id만 가리킨다. step id는 plan 전체에서 유일하다(소문자, 숫자, 하이픈, 첫 글자는 소문자).
-- 게이트와 롤백: 위험한 phase(서비스 중단 가능, 교체, 컨트롤 플레인 변경 등) 앞에는 gate를 true로 제안하고 gate_reason을 쓴다. 되돌릴 수 없는 step이 있는 phase는 서버가 게이트를 강제로 켜고 잠근다. rollback에는 구체적인 되돌리기 절차를 쓰고, 되돌릴 수 없으면 그렇게 쓴다.
+- 변경 step마다 같은 phase 안에서 그 뒤에 확인 step을 둔다. 확인은 읽기 명령이고 `check_for`에 변경 step(cli 변경, manual, iac)의 id를 쓴다(문서의 "확인:" 항목을 참고한다). 확인 없는 변경은 거부된다.
+- 문서에 사전 점검(preflight)이 적힌 변경은 서버가 그 읽기 점검을 변경 앞에 자동으로 넣는다(인자를 정할 수 없으면 경고만 남긴다). 인자를 아는 사전 점검은 네가 직접 변경 앞에 넣어도 되고, 같은 점검이 이미 앞에 있으면 서버가 중복해서 넣지 않는다. 서버가 넣은 step(`auto`)은 네가 만들 필요가 없다.
+- `depends_on`과 `check_for`는 같은 plan에서 앞에 나온 step id만 가리킨다. step id는 plan 전체에서 유일하다(소문자, 숫자, 하이픈만, 첫 글자는 소문자, 40자 이하, 밑줄·대문자 불가).
+- 게이트와 롤백: 위험한 phase(서비스 중단 가능, 교체, 컨트롤 플레인 변경 등) 앞에는 gate를 true로 제안하고 gate_reason을 쓴다. 되돌릴 수 없는 step이 있는 phase는 서버가 게이트를 강제로 켜고 잠근다. 문서에 영향 정보가 있는 명령은 서버가 알지만, 문서 정보가 없는 `iac`·`manual` step(예: Terraform으로 하는 컨트롤 플레인 업그레이드)은 되돌릴 수 없으면 `irreversible`을 true로 표시한다(되돌릴 수 있으면 표시하지 않는다). rollback에는 구체적인 되돌리기 절차를 쓰고, 되돌릴 수 없으면 그렇게 쓴다.
 - 위험한 요청: 전체 개방(0.0.0.0/0)은 사용자가 명시적으로 요청한 경우에만 만든다(서버가 위험 표시와 사유·승인자 확인을 요구한다). 와일드카드 삭제, 광범위 IAM 권한(AdministratorAccess, `*:*`)은 만들지 않고 최소 권한 대안을 rationale에 쓴다. prod 여부는 서버가 판정하니 네가 판단하지 않는다.
-- IaC: `iac_managed`가 true면 CLI로 리소스를 직접 바꾸는 변경 step 뒤에 코드 동기화를 확인하는 `iac` step(checklist: 바꿀 코드 항목, PR, terraform plan 검토)을 둔다. 가능하면 CLI 직접 변경보다 `iac` step으로 대체하는 안을 먼저 낸다.
+- IaC: `iac_managed`가 true면 코드로 관리되는 리소스를 CLI로 직접 바꾸는 변경 뒤에 서버가 코드 동기화 확인 `iac` step을 자동으로 넣고 드리프트 경고를 남긴다. 그래도 가능하면 CLI 직접 변경보다 코드 변경(`iac` step: 바꿀 코드 항목, PR, terraform plan 검토)으로 적용하는 안을 먼저 낸다.
 - 크기: phase당 step은 {max_phase_steps}개, plan 전체는 {max_plan_steps}개를 넘을 수 없다. 넘을 것 같으면 작업 범위를 줄이거나 phase를 나누고, 나눠서 따로 요청해야 하면 rationale에 쓴다.
 - 서버가 막으면 우회하지 않는다. 명령을 쪼개거나 표현을 바꿔 가드를 피하려 하지 않는다. 막힌 이유가 요청 자체에 있으면 그 step을 빼고 이유를 rationale에 쓰거나 `request_clarification`으로 알린다.
 
 # 서버 오류 코드(제출 결과로 돌아온다)
-- `blocked_command:<id>`: 명령 가드가 막았다. 금지 옵션, 셸 문법, 시크릿 경로, 허용 범위 밖 서비스 등. 명령을 다른 방법으로 바꾼다.
+- `blocked_command:<id>:<차단 사유 코드>`: 명령 가드가 막았다(예: `unknown_option` 실제 CLI에 없는 옵션, `forbidden_option` 금지 옵션, `shell_operator` 셸 문법, `unresolved_placeholder` 모르는 플레이스홀더). 사유에 맞게 명령을 바꾼다.
 - `kind_mismatch:<id>`: step 종류와 명령의 성격이 맞지 않다(manual 명령을 cli로 쓰거나 그 반대).
 - `command_required:<id>`: cli, manual, poll step에 명령이 없다.
 - `missing_check:<id>`: 변경 step 뒤에 같은 phase 안의 확인 step(`check_for`)이 없다.
-- `check_target_not_mutate:<id>`, `check_requires_read:<id>`: 확인 step은 읽기 명령이어야 하고 변경 step을 가리켜야 한다.
+- `check_target_not_change:<id>`, `check_requires_read:<id>`: 확인 step은 읽기 명령이어야 하고 변경 step(cli 변경, manual, iac)을 가리켜야 한다.
 - `unknown_or_forward_reference:<id>-><대상>`: 없거나 아직 나오지 않은 step id를 참조했다.
 - `duplicate_step_id:<id>`: step id가 겹친다.
 - `poll_spec_required:<id>`, `poll_spec_unexpected:<id>`, `poll_requires_read:<id>`: poll 규칙 위반.

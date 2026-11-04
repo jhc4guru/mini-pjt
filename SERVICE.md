@@ -58,7 +58,7 @@ AWS 인프라 운영의 반복 작업(작업 계획 생성, CLI 작성)을 모�
 EKS 업그레이드처럼 step이 많고 오래 걸리는 작업을 위한 구조.
 - **구조:** plan → phase → step. phase는 목적, 사전 조건(preflight), 게이트, 롤백 방법을 가진다. plan·phase당 step 수에 상한이 있고 넘으면 분할을 요청한다.
 - **step 종류:** `cli`(read/mutate, 서버 실행), `manual`(문구만 제공, 사람이 실행), `iac`(코드 변경과 terraform plan/apply를 사람이 수행), `check`(체크), `poll`(상태 확인 반복).
-- **게이트:** 위험한 phase(컨트롤 플레인 업그레이드, 노드 교체 등) 진입 전에 앞 phase 결과를 보여주고 요청자가 아닌 사람이 진행을 확인한다. 위치는 리뷰어가 제안하고 `impact`로 보강한다. 게이트는 추가할 수 있지만 `reversible: irreversible` step을 포함한 phase의 게이트는 제거할 수 없다.
+- **게이트:** 위험한 phase(컨트롤 플레인 업그레이드, 노드 교체 등) 진입 전에 앞 phase 결과를 보여주고 요청자가 아닌 사람이 진행을 확인한다. 위치는 리뷰어가 제안하고 `impact`로 보강한다. 게이트는 추가할 수 있지만 `reversible: irreversible` step(문서 `impact`, 또는 문서 정보가 없는 `iac`·`manual` step에 모델이 표시한 것)을 포함한 phase의 게이트는 제거할 수 없다.
 - **사전 점검:** 변경 step의 `impact.preflight`를 읽기 step으로 phase 앞에 넣어 plan 단계에서 실행하고 결과를 보여준다. `dry_run`이 있으면 사전 검증 step을 제안한다.
 - **오래 걸리는 step(`long_running`):** `poll` step으로 간격을 두고 반복 조회한다(간격·최대 시간·완료 조건은 문서에 정의). 최대 시간을 넘으면 중단하고 알린다. 진행 상태는 SQLite에 저장되어 서버가 재시작돼도 이어진다.
 - **부분 재계획:** apply 중 직접 수정은 불가하다. 실패하거나 계획을 바꿔야 하면 일시정지하고, 완료된 step은 잠근 채(수정 불가, 결과 보존) 남은 step만 새 plan 버전으로 수정해 다시 승인받아 재개한다. 새 버전은 완료된 step의 해시를 이어받아 "승인된 내용 = 실행된 내용"을 유지한다.

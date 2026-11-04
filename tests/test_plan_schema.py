@@ -88,8 +88,10 @@ def test_kind_must_match_the_guard_verdict(env):
 
 
 def test_blocked_and_commandless_steps_are_invalid(env):
-    assert "blocked_command:x" in codes_of(env, draft(([S("x", command="aws ec2 describe-vpcs --profile prod")], {})))
-    assert "blocked_command:x" in codes_of(env, draft(([S("x", command="aws ec2 describe-vpcs; rm -rf /")], {})))
+    c1 = codes_of(env, draft(([S("x", command="aws ec2 describe-vpcs --profile prod")], {})))
+    c2 = codes_of(env, draft(([S("x", command="aws ec2 describe-vpcs; rm -rf /")], {})))
+    assert any(c.startswith("blocked_command:x:") and "forbidden_option" in c for c in c1)       # 차단 사유가 코드에 실린다
+    assert any(c.startswith("blocked_command:x:") and "shell_operator" in c for c in c2)
     assert "command_required:x" in codes_of(env, draft(([S("x")], {})))
 
 
@@ -103,11 +105,17 @@ def test_every_mutating_step_needs_a_following_check_in_the_same_phase(env):
     build_plan(draft(([mut, chk], {})), *env)
 
 
-def test_check_step_must_target_a_mutating_read_step(env):
+def test_check_step_must_target_a_change_step(env):
     _, masker = env
     look = S("look", command=masked(masker, "aws ec2 describe-vpcs"))
     chk = S("c", command=masked(masker, "aws ec2 describe-vpcs"), check_for="look")
-    assert "check_target_not_mutate:c" in codes_of(env, draft(([look, chk], {})))
+    assert "check_target_not_change:c" in codes_of(env, draft(([look, chk], {})))        # 읽기 step은 확인 대상이 아니다
+    # 사람이 하는 변경(iac, manual)도 읽기 확인 step으로 검증할 수 있다
+    iac = S("code", kind="iac", checklist=["PR 생성"])
+    man = S("login", kind="manual", command="kubectl exec web-0 -- ls")
+    ok = draft(([iac, S("c1", command=masked(masker, "aws ec2 describe-vpcs"), check_for="code"),
+                 man, S("c2", command=masked(masker, "aws ec2 describe-vpcs"), check_for="login")], {}))
+    build_plan(ok, *env)
 
 
 def test_ids_and_references(env):
@@ -187,3 +195,19 @@ def test_hash_is_stable_and_covers_everything_the_approver_sees(env):
     d["phases"][0]["rollback"] = "다른 롤백"
     assert plan_hash(build_plan(PlanDraft.model_validate(d), guard, masker)) != plan_hash(p1)       # 롤백이 바뀌어도
     assert step_hash(p1.all_steps()[0]) != step_hash(p1.all_steps()[1])
+
+
+def test_declared_irreversible_iac_step_locks_the_gate_but_cannot_unlock_documented_ones(env):
+    _, masker = env
+    chk = S("c", command=masked(masker, "aws ec2 describe-vpcs"), check_for="up")
+    plan = build_plan(draft(([S("up", kind="iac", checklist=["version 변경"], irreversible=True), chk], {"gate": False}),
+                            ([S("look", command=masked(masker, "aws ec2 describe-vpcs"))], {})), *env)
+    assert plan.phases[0].gate and plan.phases[0].gate_locked and plan.phases[0].steps[0].irreversible
+    assert not plan.phases[1].gate_locked
+    plain = build_plan(draft(([S("up", kind="iac", checklist=["version 변경"]), chk], {"gate": False})), *env)
+    assert not plain.phases[0].gate and not plain.phases[0].gate_locked
+    # 문서가 irreversible인 명령은 모델이 irreversible=false로 써도 잠긴다
+    inst = masker.mask("i-0abc123def4567890")
+    kill = draft(([S("kill", command=f"aws ec2 terminate-instances --instance-ids {inst}", irreversible=False),
+                   S("v", command=f"aws ec2 describe-instances --instance-ids {inst}", check_for="kill")], {"gate": False}))
+    assert build_plan(kill, *env).phases[0].gate_locked

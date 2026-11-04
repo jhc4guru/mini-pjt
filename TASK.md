@@ -66,25 +66,26 @@
 
 ## T4. 계획 생성
 - [x] 질의 정규화·범위 판단·모호 표현 해소 `app/planner/intake.py` (READ 모델 구조화 출력, 서버 검증, 누출 검사), 테스트 16개 (D-30)
-- [ ] 근거 기반 명령 생성 + 근거 조각 첨부
+- [x] 근거 기반 명령 생성(`chunk_id`·`grounded`) + 근거 조각 조회 `step_evidence`. 근거 조각을 이력에 저장·화면에 표시하는 것은 T7·T8
 - [x] 되묻기 (모호함/필수 파라미터 누락): `IntakeResult.questions`. 화면 표시와 답변 재입력 처리는 T6/T8
-- [ ] 조건부 폴백 ("AI 추정" 표시, 강화 승인 플래그)
+- [x] 조건부 폴백: `Step.fallback`(문서 근거 없음)·`needs_other_approval` (표시·승인 UI는 T6/T8)
 - [x] 계획 스키마 `app/planner/schema.py`: PlanDraft(모델) → `build_plan`(서버 보강: 분류·위험·근거·폴백·impact, 게이트 강제), 구조 검증, `plan_hash`, 테스트 14개. 변경 step ↔ 확인 step 짝은 검증으로 강제(자동 생성은 계획 에이전트가 함)
 - [x] 읽기 전용 도구 세트 `app/agents/tools.py` (search_docs, lookup_inventory, run_read_command) + 변경 경로 차단 테스트 17개. 실행은 주입된 `ReadCommandRunner`(T5 실행기가 구현)
-- [x] 계획 에이전트 `app/planner/agent.py` + 시스템 프롬프트 `prompts.py` (도구 호출, phase별 제출, 서버 검증·수정 루프, 중단 처리, `LLMClient.chat`), 테스트 22개 (D-32). 실제 MAIN 모델로 단순 요청 1건 확인(수정 없이 2 phase·5 step, 약 42,000 토큰), 큰 작업·평가셋은 T9에서
+- [x] 계획 에이전트 `app/planner/agent.py` + 시스템 프롬프트 `prompts.py` (도구 호출, phase별 제출, 서버 검증·수정 루프, 중단 처리, `LLMClient.chat`), 테스트 23개 (D-32). 실제 MAIN 모델로 EKS 업그레이드 시나리오 실행(5 phase·50 step 계획 생성, 15회 호출·164초·331,000 토큰): **기본 토큰 한도 250,000을 넘어 한도 조정 승인 필요**(D-32 남은 문제). 평가셋 채점은 T9에서
 - [x] LLM 호출 래퍼 `app/llm.py`: 역할별 모델 선택, 발송 전 누출 검사, MAIN 쓰로틀링 시 재시도 2회 후 SUB 폴백(요청·실제 역할 기록, 토큰은 같은 예산에 합산, 다른 오류·SUB/READ는 폴백 없이 중단), 테스트 10개 (D-19)
-- [ ] 리뷰어 에이전트 (영향 범위, 위험, 롤백 누락 요약)
+- [x] 리뷰어 `app/planner/review.py` (서버 규칙 체크리스트·위험 등급 + SUB 모델 요약, 참고용), 테스트 12개 (D-35). 실제 SUB 모델로 확인
 - [ ] 실패 분석 에이전트 (원인, 대안 step 제안 → plan 복귀 후 재승인)
-- [ ] 문서를 CLI 도구별·서비스별로 분리 유지 (`knowledge/cli/aws/<service>/`, `knowledge/cli/kubectl/`) — 폴더 구조는 완료, 파일 작성은 T2
-- [ ] plan을 phase 구조로 생성 (단계, 사전 조건, 게이트, 롤백) + 리뷰어 phase별 체크리스트 (`SERVICE.md` 3-2절)
-- [ ] step 종류 `cli`/`manual`/`iac`/`check`/`poll` 모델링, `impact.preflight` 읽기 step 자동 삽입, `dry_run` 사전 검증 step 제안
-- [ ] IaC 동기화: `iac_managed` 설정, `impact.iac: true` 변경 step에 코드 동기화 확인 step·드리프트 경고 자동 추가, `iac` step 대체 권고
-- [ ] 영향 불명(`impact` 없음/폴백) 처리: 높은 위험 취급
+- [x] 문서를 CLI 도구별·서비스별로 분리 유지 (`knowledge/cli/aws/<service>/`, `knowledge/cli/kubectl/`) — 폴더 구조는 완료, 파일 작성은 T2
+- [x] plan을 phase 구조로 생성 (단계, 사전 조건, 게이트, 롤백) + 리뷰어 phase별 체크리스트 (`SERVICE.md` 3-2절)
+- [x] step 종류 `cli`/`manual`/`iac`/`check`/`poll` 모델링(스키마), `impact.preflight` 읽기 step 서버 자동 삽입(못 만들면 경고), `dry_run`은 경고로 제안 (D-33)
+- [x] IaC 동기화: `iac_managed`이고 `impact.iac: true`인 변경 뒤에 코드 동기화 확인 `iac` step과 `iac_drift`·`consider_iac_step` 경고 자동 추가 (D-33). `iac_managed` 설정 화면은 T6/T8
+- [x] 영향 불명 처리: 가드가 `unknown_impact` 플래그와 높은 위험으로 판정(`Step.flags`). 표시는 T8
 
 ## T5. 실행기
 - [ ] 실행 위치 결정(D-28: 이 서버 직접 vs 권한 서버에 요청) — T5 시작 전
 - [ ] `executor/base.py` 인터페이스 + 직렬화 가능한 `ExecutionRequest`, 요청별 격리 kubeconfig·자격증명 계약(전역 `~/.kube/config` 불변)
 - [ ] mock 실행기: moto server + 환경변수 강제 (실제 AWS 차단)
+  - moto 지원 범위 확인(2026-11-04, 로컬 moto 서버에 aws CLI 46개 명령): 36개 성공. EC2(SG·인스턴스·launch template)·IAM·S3·ASG 기본·EKS 클러스터 기본은 동작. **미지원:** `eks update-cluster-version`·`list-updates`·`list-addons`·`describe-addon-versions`·`list-insights`, `autoscaling start-instance-refresh`·`describe-instance-refreshes`(500). 그 밖 실패는 시험 준비 문제(AWS 관리형 정책 미탑재, 버전 관리 버킷 비우기, SSM 파라미터 미탑재). 미지원 명령은 실행기가 상태를 가진 시뮬레이터로 대신한다(EKS 업그레이드 시나리오의 핵심 변경 명령이라)
 - [ ] kubectl fixture 응답
 - [ ] 읽기/변경 분류 규칙 (허용 목록, 애매하면 변경)
 
@@ -177,3 +178,8 @@
 - 2026-11-04: D-31(서버·노드=EC2 인스턴스, Pod=Pod, 되묻지 않음): 용어 사전의 `서버` 모호 항목 제거·`노드`를 EC2 별칭으로 이동, 접수 프롬프트에 고정 사실, 평가셋 26·41·42번과 검색 평가 r14 태그 갱신, 회귀 테스트 추가. 테스트 284개
 - 2026-11-04: T4 계획 스키마(`PlanDraft`→`build_plan`→`Plan`, 구조 검증, `plan_hash`) 구현. 모델은 초안만 만들고 분류·위험·근거·게이트는 서버가 정함. 테스트 298개
 - 2026-11-04: 계획 에이전트(D-32) 구현: Converse 도구 호출 + 제출 통로 3개, phase별 생성·검증·수정, 시스템 프롬프트를 가드 상수로 생성하고 테스트로 대조, `LLMClient.chat` 추가. 테스트 320개. 실제 MAIN 모델로 단순 요청 1건 확인(수정 없이 plan 생성, 약 42,000 토큰)
+- 2026-11-04: 계획 후처리(D-33) 구현: 사전 점검 읽기 step·IaC 동기화 step 서버 삽입, 경고, 해시 반영. 테스트 329개
+- 2026-11-04: EKS 1.35→1.36 시나리오를 실제 모델로 5회 실행하며 수정: 단계 완료 시 대화 압축, 차단 사유 코드 전달, 확인 step 대상 확대(manual·iac), id·depends_on 한도, 문서의 `$Latest` 예시 수정(+ 문서 예시 `$` 금지 테스트). 마지막 실행은 계획 생성 성공(5 phase·50 step) 했으나 331,000 토큰·164초로 기본 한도(250,000·180초)를 넘음 — 한도 조정은 사용자 승인 대기. 테스트 331개
+- 2026-11-04: 사용자 승인: 에이전트 한도 토큰 500,000·600초로 상향(D-26, 테스트로 기본값 고정), 모델이 표시한 `irreversible`로 게이트 잠금(D-34). 테스트 333개
+- 2026-11-04: 리뷰어(D-35) 구현. 리뷰어 실측 중 마스킹 구멍 발견·수정: 한글 조사가 붙은 값(`sg-…를`, `123456789012의`, `AKIA…를`, JWT, 한글에 붙은 영어 인젝션 문구)이 `\b` 때문에 마스킹·탐지를 피해 갔음 → 회귀 테스트 먼저 작성 후 패턴을 ASCII 경계로 수정, 문서의 IP 표기 2곳 수정, 문서에 민감값이 없는지 확인하는 테스트 추가. 테스트 362개. T4 남은 것: 실패 분석 에이전트(T5·T6 이후)
+- 2026-11-04: T5 전 moto 지원 범위 확인: 46개 중 36개 성공, EKS 업그레이드·ASG 인스턴스 리프레시 계열은 미지원 → 시뮬레이터 필요(T5 예상 시간 2~3시간 → 3~4시간)

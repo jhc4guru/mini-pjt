@@ -103,6 +103,8 @@ class PlanResult:
     roles: tuple[str, ...] = ()                   # 호출마다 요청 역할->실제 역할
     usage: dict = field(default_factory=dict)
     repairs: int = 0
+    repair_log: tuple[str, ...] = ()              # 수정 요청에 쓰인 오류 코드(진단용, 값 없음)
+    token_log: tuple[tuple[int, int], ...] = ()   # 호출별 (입력, 출력) 토큰
 
 
 class _Stop(Exception):
@@ -137,6 +139,8 @@ class PlanningAgent:
         self._pending: list[dict] = []
         self._roles: list[str] = []
         self._repairs = 0
+        self._repair_log: list[str] = []
+        self._token_log: list[tuple[int, int]] = []
         self._session, self._iac = session_id, iac_managed
         try:
             result = self._run(intake)
@@ -175,13 +179,13 @@ class PlanningAgent:
 
         name, payload = self._stage({"submit_outline": on_outline, "request_clarification": on_clarify})
         if name == "request_clarification":
-            return PlanResult("clarify", questions=tuple(payload), roles=tuple(self._roles), usage=self._budget.usage(), repairs=self._repairs)
+            return PlanResult("clarify", questions=tuple(payload), roles=tuple(self._roles), usage=self._budget.usage(), repairs=self._repairs,
+                              repair_log=tuple(self._repair_log), token_log=tuple(self._token_log))
 
         o: _OutlineInput = outline["value"]
         done: list[PhaseDraft] = []
         for op in o.phases:
-            step_ids = {p.id: [s.id for s in p.steps] for p in done}
-            self._user(self._phase_text(op, step_ids))
+            self._user(self._phase_text(op, done))
             holder: dict = {}
 
             def on_phase(inp: dict, op=op, holder=holder) -> tuple[bool, Any]:
@@ -198,22 +202,29 @@ class PlanningAgent:
                         raise _Stop("model_output_unsafe") from None
                     return False, e.codes[:8]
                 holder["phase"] = phase
-                return True, None
+                return True, len(steps)
 
-            self._stage({"submit_phase": on_phase})
+            self._stage({"submit_phase": on_phase}, compact=True)
             done.append(holder["phase"])
 
         plan = build_plan(PlanDraft(summary=o.summary, phases=done), self._guard, self._masker, iac_managed=self._iac)
-        return PlanResult("plan", plan=plan, roles=tuple(self._roles), usage=self._budget.usage(), repairs=self._repairs)
+        return PlanResult("plan", plan=plan, roles=tuple(self._roles), usage=self._budget.usage(), repairs=self._repairs,
+                          repair_log=tuple(self._repair_log), token_log=tuple(self._token_log))
 
-    def _stage(self, handlers: dict[str, Callable[[dict], tuple[bool, Any]]]) -> tuple[str, Any]:
-        """한 단계: 제출 통로가 허용될 때까지 모델과 도구 호출을 주고받는다. 성공하면 (도구 이름, 값)."""
+    def _stage(self, handlers: dict[str, Callable[[dict], tuple[bool, Any]]], *, compact: bool = False) -> tuple[str, Any]:
+        """한 단계: 제출 통로가 허용될 때까지 모델과 도구 호출을 주고받는다. 성공하면 (도구 이름, 값).
+
+        compact=True면 성공한 뒤 이 단계의 중간 대화(조사, 실패한 제출, 오류 결과)를 버리고 수락된 제출만 짧게 남긴다.
+        매 호출에 대화 전체가 다시 실리므로 phase가 쌓일수록 입력 토큰이 늘어나는 것을 막는다(앞선 phase의 내용은 다음 요청에 요약으로 준다).
+        """
+        stage_start = len(self._messages)
         repairs = nudges = 0
         while True:
             self._budget.before_step()
             res = self._llm.chat("MAIN", self._messages, system=SYSTEM_PROMPT, tools=self._tools,
                                  max_tokens=MAX_OUTPUT_TOKENS, session_id=self._session)
             self._roles.append(f"{res.requested_role}->{res.actual_role}")
+            self._token_log.append((res.input_tokens, res.output_tokens))
             if leak_kinds(flatten_text(None, [{"content": res.content}]), self._masker):
                 raise _Stop("model_output_unsafe")              # 누출이 든 출력은 대화에 남기지 않고 멈춘다
             if res.stop_reason == "max_tokens":                  # 잘린 출력은 대화에 넣지 않고 줄여서 다시 요청한다
@@ -242,10 +253,12 @@ class PlanningAgent:
                     ok, value = handlers[name](inp)
                     if ok:
                         accepted = (name, value)
+                        accepted_use = use
                         results.append(_tool_result(use, {"accepted": True}, True))
                     else:
                         repairs += 1
                         self._repairs += 1
+                        self._repair_log += [f"{name}:{c}" for c in value[:6]]
                         results.append(_tool_result(use, {"error": value}, False))
                 elif name in SUBMIT_TOOLS:
                     repairs += 1
@@ -257,6 +270,10 @@ class PlanningAgent:
                     results.append(_tool_result(use, {"error": ["unknown_tool"]}, False))
             self._pending = results
             if accepted is not None:
+                if compact:
+                    kept = {"toolUse": {**accepted_use, "input": {"accepted_steps": accepted[1]}}}
+                    self._messages[stage_start:] = [{"role": "assistant", "content": [kept]}]
+                    self._pending = [_tool_result(accepted_use, {"accepted": True}, True)]
                 return accepted                                   # 결과는 다음 사용자 메시지 앞에 붙는다
             if repairs > self._max_repairs:
                 raise _Stop("repair_exhausted")
@@ -282,17 +299,20 @@ class PlanningAgent:
             "필요하면 도구로 조사한 뒤 submit_outline으로 phase 윤곽을 제출하거나, 꼭 필요한 정보가 없으면 request_clarification으로 물어라."
         )
 
-    def _phase_text(self, op: _OutlinePhase, earlier: dict[str, list[str]]) -> str:
-        prior = "\n".join(f"- {pid}: {', '.join(ids)}" for pid, ids in earlier.items()) or "(없음)"
+    def _phase_text(self, op: _OutlinePhase, earlier: list[PhaseDraft]) -> str:
+        prior = "\n".join(
+            f"[{p.id}] {p.title}\n" + "\n".join(f"- {s.id} ({s.kind}): {(s.command or s.title)[:110]}" for s in p.steps) for p in earlier
+        ) or "(없음)"
         return (
             f"iac_managed: {'true' if self._iac else 'false'}\n"
             f"이제 phase `{op.id}`({op.title})의 step을 submit_phase로 제출하라. 목적: {op.purpose or '(미기재)'}. "
-            f"step은 최대 {MAX_PHASE_STEPS}개다.\n앞선 phase의 step id(depends_on, check_for로 참조 가능):\n{prior}"
+            f"step은 최대 {MAX_PHASE_STEPS}개다.\n앞선 phase의 step 요약(id로 depends_on, check_for 참조 가능. 수락된 내용이며 다시 제출하지 않는다):\n{prior}"
         )
 
     # ---- 결과 ----
     def _stopped(self, code: str) -> PlanResult:
-        return PlanResult("stopped", reasons=(code,), roles=tuple(self._roles), usage=self._budget.usage(), repairs=self._repairs)
+        return PlanResult("stopped", reasons=(code,), roles=tuple(self._roles), usage=self._budget.usage(), repairs=self._repairs,
+                          repair_log=tuple(self._repair_log), token_log=tuple(self._token_log))
 
     def _log(self, result: PlanResult) -> None:
         if self._audit is None:

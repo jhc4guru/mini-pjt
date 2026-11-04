@@ -37,7 +37,7 @@
 21. 로컬 경로(`file://`, `--filename`, `s3 cp/sync`)는 세션 작업 폴더 밖(절대 경로, `..`)이면 차단된다.
 22. 문서에 없는 옵션은 실제 CLI 옵션 스냅샷으로 검증되어 차단되고, `rollout status`에는 `--timeout`이 강제되며 `--watch`/`--follow`는 차단된다.
 23. `knowledge/cli` 검증(`tests/check_docs.py`)이 오류 0건으로 통과한다.
-24. plan은 phase 구조(단계, 사전 조건, 게이트, 롤백)를 가지며, 게이트에서 요청자가 아닌 사람의 진행 확인 없이는 다음 phase로 가지 않는다. `irreversible` step을 포함한 phase의 게이트는 제거할 수 없다.
+24. plan은 phase 구조(단계, 사전 조건, 게이트, 롤백)를 가지며, 게이트에서 요청자가 아닌 사람의 진행 확인 없이는 다음 phase로 가지 않는다. `irreversible` step(문서 `impact` 또는 모델이 `iac`·`manual` step에 표시한 것)을 포함한 phase의 게이트는 제거할 수 없다.
 25. 변경 step의 `impact.preflight`가 plan 단계 읽기 step으로 자동 삽입·실행되어 결과가 표시된다. `impact`가 없는 명령(폴백 포함)은 "영향 불명"으로 표시되고 높은 위험으로 취급된다.
 26. `long_running` step은 poll step으로 진행되고 최대 시간 초과 시 중단·알림된다. 서버를 재시작해도 apply가 이어진다.
 27. 부분 재계획: apply 일시정지 후 완료된 step은 잠기고(수정 불가) 남은 step만 새 plan 버전으로 수정·재승인되어 재개된다.

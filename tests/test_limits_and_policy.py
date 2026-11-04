@@ -206,3 +206,9 @@ def test_no_function_has_a_bypass_parameter():
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 names = {a.arg for a in [*node.args.args, *node.args.kwonlyargs]}
                 assert not (names & banned), (path.name, node.name, names & banned)
+
+
+def test_agent_limit_defaults_are_pinned():
+    """기본 한도를 바꾸려면 사용자 승인과 D-26 갱신이 필요하다. 값이 조용히 바뀌지 않게 고정한다."""
+    lim = Limits()
+    assert (lim.max_tool_calls, lim.max_steps, lim.max_tokens, lim.max_seconds, lim.max_repeats) == (30, 40, 500_000, 600.0, 2)

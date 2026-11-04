@@ -301,3 +301,25 @@ def test_system_prompt_has_no_sensitive_values_and_states_the_core_rules():
     for phrase in ("마스킹", "플레이스홀더", "untrusted_data", "EC2 인스턴스", "Pod은 Pod", "문서 근거 없음", "확인 step",
                    "게이트", "롤백", "우회하지 않는다", "제안만", "iac_managed", "request_clarification"):
         assert phrase in SYSTEM_PROMPT, phrase
+
+
+def test_accepted_phase_compacts_the_conversation_so_input_does_not_keep_growing(world):
+    make, intake, _, _ = world
+    post = {"steps": [{"id": "post", "kind": "check", "title": "서비스 확인", "checklist": ["동작 확인"]}]}
+    agent, fake, _ = make([
+        tools(use("submit_outline", outline("p1", "p2"), "o")),
+        tools(use("search_docs", {"query": "인스턴스 재부팅"}, "s")),                     # phase 1: 조사
+        tools(use("submit_phase", reboot_steps(PH, with_check=False), "bad")),             # phase 1: 실패한 제출
+        tools(use("submit_phase", reboot_steps(PH, prefix="a-"), "good")),                 # phase 1: 수락
+        tools(use("submit_phase", post, "p2")),
+    ])
+    r = agent.run(intake)
+    assert r.status == "plan" and r.repairs == 1
+    last = fake.calls[-1]["messages"]                                     # phase 2를 요청하는 호출
+    dumped = json.dumps(last, ensure_ascii=False)
+    assert "missing_check" not in dumped and "untrusted_data" not in dumped and '"bad"' not in dumped and '"s"' not in dumped
+    kept = [b["toolUse"] for m in last if m["role"] == "assistant" for b in m["content"] if "toolUse" in b and b["toolUse"]["name"] == "submit_phase"]
+    assert kept and kept[0]["input"] == {"accepted_steps": 3}
+    assert "a-look" in last[-1]["content"][-1]["text"] and "a-reboot" in last[-1]["content"][-1]["text"]      # 앞선 phase는 요약으로 전달
+    assert [m["role"] for m in last] == ["user", "assistant", "user", "assistant", "user"]
+    assert len(r.token_log) == 5 and r.repair_log and r.repair_log[0].startswith("submit_phase:missing_check")

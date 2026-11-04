@@ -10,6 +10,8 @@
 - 변경 step마다 같은 phase 안에서 뒤에 오는 확인(`check_for`) step이 있어야 한다.
 - 되돌릴 수 없는(`irreversible`) step을 포함한 phase의 게이트는 서버가 켜고 잠근다(제거 불가).
 - plan·phase당 step 수 상한(`agent_limits.check_plan_size`).
+
+`build_plan`은 마지막에 `postprocess.apply_postprocess`로 사전 점검 읽기 step과 IaC 동기화 `iac` step을 서버가 더하고 경고를 남긴다(`Step.auto`, `Plan.warnings`).
 """
 from __future__ import annotations
 
@@ -24,7 +26,7 @@ from app.guards.boundary import leak_kinds
 from app.guards.command_guard import CommandGuard
 from app.guards.masking import Masker
 
-STEP_ID = r"^[a-z][a-z0-9-]{0,30}$"
+STEP_ID = r"^[a-z][a-z0-9-]{0,39}$"
 StepKind = Literal["cli", "manual", "iac", "check", "poll"]
 
 
@@ -48,11 +50,12 @@ class StepDraft(BaseModel):
     kind: StepKind
     title: str = Field(min_length=1, max_length=120)
     command: str | None = Field(default=None, max_length=600)     # 마스킹된 명령. cli·manual·poll은 필수
-    depends_on: list[str] = Field(default_factory=list, max_length=8)
+    depends_on: list[str] = Field(default_factory=list, max_length=16)
     check_for: str | None = Field(default=None, pattern=STEP_ID)  # 이 step이 확인하는 변경 step의 id
     poll: PollSpec | None = None
     checklist: list[str] = Field(default_factory=list, max_length=12)   # iac·check(수동 체크)용
     rationale: str = Field(default="", max_length=200)
+    irreversible: bool = False                       # 되돌릴 수 없는 변경이면 true(iac·manual 등 문서 impact가 없는 step용). 서버는 더 엄격한 쪽으로만 반영한다
 
 
 class PhaseDraft(BaseModel):
@@ -93,6 +96,8 @@ class Step(BaseModel):
     flags: tuple[str, ...] = ()
     requires: tuple[str, ...] = ()
     impact: dict = Field(default_factory=dict)
+    auto: bool = False                                              # 서버가 후처리에서 넣은 step(사전 점검, 코드 동기화 확인)
+    declared_irreversible: bool = False                             # 모델이 표시한 되돌릴 수 없음(문서 impact가 없는 step). 게이트 잠금만 강화한다
 
     @property
     def fallback(self) -> bool:
@@ -105,7 +110,8 @@ class Step(BaseModel):
 
     @property
     def irreversible(self) -> bool:
-        return self.impact.get("reversible") == "irreversible"
+        """문서의 impact 또는 모델의 표시. 어느 쪽이든 true면 그 phase의 게이트가 잠긴다(모델이 false로 해도 문서 값은 바뀌지 않는다)."""
+        return self.impact.get("reversible") == "irreversible" or self.declared_irreversible
 
 
 class Phase(BaseModel):
@@ -126,13 +132,14 @@ class Plan(BaseModel):
     summary: str
     phases: tuple[Phase, ...]
     iac_managed: bool = False
+    warnings: tuple[str, ...] = ()                                  # 후처리 경고 코드(검토자에게 표시, 해시에 포함)
 
     def all_steps(self) -> list[Step]:
         return [s for p in self.phases for s in p.steps]
 
 
 # ---------------- 구성과 검증 ----------------
-def build_plan(draft: PlanDraft, guard: CommandGuard, masker: Masker, *, iac_managed: bool = False) -> Plan:
+def build_plan(draft: PlanDraft, guard: CommandGuard, masker: Masker, *, iac_managed: bool = False, postprocess: bool = True) -> Plan:
     codes: list[str] = []
     text = " ".join([draft.summary] + [
         " ".join([p.title, p.purpose, p.rollback, p.gate_reason, *p.preconditions] + [
@@ -156,8 +163,8 @@ def build_plan(draft: PlanDraft, guard: CommandGuard, masker: Masker, *, iac_man
             for dep in (*sd.depends_on, *([sd.check_for] if sd.check_for else [])):
                 if dep not in seen:
                     codes.append(f"unknown_or_forward_reference:{sd.id}->{dep}")
-            if sd.check_for and sd.check_for in seen and seen[sd.check_for].op != "mutate":
-                codes.append(f"check_target_not_mutate:{sd.id}")
+            if sd.check_for and sd.check_for in seen and not _is_change(seen[sd.check_for]):
+                codes.append(f"check_target_not_change:{sd.id}")
             seen[sd.id] = step
             steps.append(step)
         _require_checks(steps, codes)
@@ -169,12 +176,22 @@ def build_plan(draft: PlanDraft, guard: CommandGuard, masker: Masker, *, iac_man
         ))
     if codes:
         raise PlanInvalid(codes)
-    return Plan(summary=draft.summary, phases=tuple(phases), iac_managed=iac_managed)
+    plan = Plan(summary=draft.summary, phases=tuple(phases), iac_managed=iac_managed)
+    if not postprocess:
+        return plan
+    from app.planner.postprocess import apply_postprocess      # 순환 import를 피한다
+    return apply_postprocess(plan, guard, masker)
+
+
+def _is_change(step: Step) -> bool:
+    """확인 step이 확인할 수 있는 대상: 서버가 실행하는 변경, 사람이 실행하는 manual, 코드 변경(iac) step."""
+    return step.op in ("mutate", "manual") or step.kind == "iac"
 
 
 def _enrich(sd: StepDraft, guard: CommandGuard, masker: Masker, codes: list[str]) -> Step:
     base = dict(id=sd.id, kind=sd.kind, title=sd.title, command=sd.command, depends_on=tuple(sd.depends_on),
-                check_for=sd.check_for, poll=sd.poll, checklist=tuple(sd.checklist), rationale=sd.rationale)
+                check_for=sd.check_for, poll=sd.poll, checklist=tuple(sd.checklist), rationale=sd.rationale,
+                declared_irreversible=sd.irreversible)
     needs_command = sd.kind in ("cli", "manual", "poll")
     if needs_command and not sd.command:
         codes.append(f"command_required:{sd.id}")
@@ -187,7 +204,7 @@ def _enrich(sd: StepDraft, guard: CommandGuard, masker: Masker, codes: list[str]
         return Step(**base)                              # 코드 변경 체크리스트·수동 체크: 실행하지 않는다
     v = guard.check(sd.command, masker)
     if not v.allow:
-        codes.append(f"blocked_command:{sd.id}")
+        codes.append(f"blocked_command:{sd.id}:{','.join(v.blocks[:3])}")      # 차단 사유 코드는 모델이 고칠 수 있게 알려 준다(값 없음)
         return Step(**base)
     if sd.kind == "manual" and v.kind != "manual":
         codes.append(f"kind_mismatch:{sd.id}")
@@ -221,7 +238,7 @@ def step_hash(step: Step) -> str:
 def plan_hash(plan: Plan) -> str:
     """승인 잠금용 해시. 사용자에게 보이는 모든 내용(제목, 게이트, 롤백 포함)과 step 해시 순서를 묶는다."""
     body = {
-        "summary": plan.summary, "iac_managed": plan.iac_managed,
+        "summary": plan.summary, "iac_managed": plan.iac_managed, "warnings": list(plan.warnings),
         "phases": [
             {"id": p.id, "title": p.title, "purpose": p.purpose, "preconditions": list(p.preconditions), "gate": p.gate,
              "gate_locked": p.gate_locked, "gate_reason": p.gate_reason, "rollback": p.rollback,

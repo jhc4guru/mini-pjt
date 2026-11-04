@@ -47,6 +47,7 @@
 - 모델은 `PlanDraft`(plan → phase → step 초안)만 만든다. 초안에는 읽기/변경 분류, 위험, 근거, 폴백, 영향이 없고(필드를 넣으면 스키마 오류), 서버가 `build_plan`에서 `CommandGuard.check` 판정으로 채워 `Plan`을 만든다. step 종류는 `cli`·`manual`·`iac`·`check`·`poll`이다.
 - 구조 규칙(위반 시 `PlanInvalid`, 코드 목록): 유일한 step id, `depends_on`·`check_for`는 앞선 step만 가리킴, 가드가 막은 명령 금지, 모델이 붙인 종류와 가드 판정 불일치 금지(예: `cli`인데 manual 명령), 변경 step마다 같은 phase 안에서 뒤따르는 확인 step(읽기), `poll`은 읽기 명령과 간격·최대 시간·완료 조건 필수, `iac`·`check`는 명령 없이 체크리스트, 모델 출력에 민감값이 있으면 거부, plan·phase당 step 상한.
 - `irreversible` step이 있는 phase는 서버가 게이트를 켜고 잠근다(`gate_locked`). 근거 없는(폴백) 명령은 `grounded=False`이고 읽기/변경과 무관하게 다른 사람의 승인이 필요하다(`Step.needs_other_approval`). 분류가 애매한 명령은 가드가 변경으로 분류한다.
+- 후처리(`postprocess.apply_postprocess`, D-33): 변경 step의 `impact.preflight` 읽기 step을 그 phase 맨 앞에 넣고(변경 명령의 옵션·대상에서 인자를 복사해 만들고 가드를 통과한 문서 근거의 읽기 명령일 때만, 못 만들면 `preflight_not_inserted` 경고), `iac_managed`이면 `impact.iac` 변경의 확인 step 뒤에 코드 동기화 확인 `iac` step과 `iac_drift`·`consider_iac_step` 경고를 더하고, `dry_run`은 `dry_run_available` 경고로 알린다. 더한 step은 `Step.auto`, 경고는 `Plan.warnings`이고 둘 다 해시에 들어간다. 더한 뒤 크기 상한을 다시 검사한다(`plan_too_large_after_auto_steps`).
 - `plan_hash`는 사용자에게 보이는 모든 내용(제목, 게이트, 롤백 포함)과 step 해시의 순서를 묶는다(승인 잠금, T6). 실제 값 복원본의 확인은 승인 엔진(T6)이 맡는다.
 
 ### 계획 에이전트 (`app/planner/agent.py`, 프롬프트 `app/planner/prompts.py`, D-32)
@@ -55,6 +56,14 @@
 - 중단 코드(`stopped.reasons`): `model_output_unsafe`(출력에 실제 값, 재시도 없음), `repair_exhausted`, `output_truncated`, `no_submission`, `llm_unavailable`, `leak_blocked`, 상한(`steps_exceeded`, `tool_calls_exceeded`, `repeated_call`, `tokens_exceeded`, `time_exceeded`). 판정은 감사 기록에 남고 입력 텍스트는 없다.
 - `LLMClient.chat`: 여러 턴·도구 호출 대화. 발송 전에 시스템·메시지·도구 결과·도구 입력·도구 정의 전체를 누출 검사하고, MAIN→SUB 폴백과 토큰 합산은 `complete`와 같은 경로다. 출력 한도 8,192 토큰.
 - 시스템 프롬프트는 역할·입력(마스킹)·고정 사실(서버·노드=EC2, Pod, 운영 환경)·도구와 한도·작업 순서·step 규칙·서버 오류 코드·출력 형식으로 구성된다. 금지 옵션, `--timeout` 필수 명령, 한도, step 상한은 가드 상수에서 채우고 테스트가 대조한다. manual 명령 목록은 문서와 대조한다.
+
+### 리뷰어 (`app/planner/review.py`, D-35)
+- 서버 규칙(`build_review`): phase별 체크리스트(`irreversible`, `disruption_likely/possible`, `replaces`, `no_gate`, `no_rollback`, `no_preconditions`, `fallback_step`, `risk_flag`(HIGH_FLAGS), 정보성 `manual_step`·`iac_step`·`auto_step`)와 위험 등급(high: 되돌릴 수 없음·위험 플래그·폴백 step, medium: 그 밖의 경고나 후처리 경고, low). 모델은 관여하지 않는다.
+- 요약(`Reviewer.review`): 서버가 만든 사실 JSON만 SUB 모델에 주고 headline·summary·attention·phase_notes를 받는다. 스키마 검증(2회 재시도), 누출·모르는 플레이스홀더 검사를 통과해야 하고, 실패하거나 모델을 쓸 수 없으면 요약 없이 체크리스트만 돌려준다. 모델은 등급·체크리스트를 바꿀 수 없다. 화면(T8)은 서버 체크리스트와 등급을 요약과 함께 보인다.
+- `step_evidence(step, chunks)`: 근거 있는 step은 근거 문서 텍스트·경로, 근거 없는 읽기/변경 step은 "AI 추정" 표시.
+
+### 마스킹·패턴의 한글 조사 경계
+- 파이썬의 `\b`·`\w`는 한글을 단어 문자로 보아 값 뒤에 조사가 붙으면(`sg-0123…를`, `123456789012의`, `AKIA…를`) 경계가 사라져 마스킹·시크릿(JWT)·인젝션(한글에 붙은 영어 구문) 패턴을 피해 갔다(2026-11-04 발견, 리뷰어 실측 중 `0.0.0.0/0으로`에서 드러남). `patterns.py`는 모든 패턴의 `\b`를 ASCII 경계로 바꿔 컴파일하고, ARN은 ASCII 문자까지만 잡아 조사를 남긴다. 회귀 테스트는 `tests/test_masking.py`·`tests/test_input_guard.py`, 검색 문서에 값이 없는지 확인하는 테스트는 `tests/test_docs_sync.py`.
 
 ## 2. 검색 구성 (구현: `app/rag/`, 진입점 `app/rag/factory.py`)
 - **chunk:** 명령 하나(141개). 텍스트에 문서 제목, 실행 형태, 종류·위험도·영향 요약, 본문(설명·키워드·예시·주의)을 넣고 메타데이터(cli, service, kind, risk, guard)를 함께 저장한다.

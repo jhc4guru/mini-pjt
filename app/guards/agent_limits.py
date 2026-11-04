@@ -46,8 +46,8 @@ class SchemaViolation(GuardLimitError):
 class Limits:
     max_tool_calls: int = 30
     max_steps: int = 40            # 에이전트 추론 단계(LLM 호출) 수
-    max_tokens: int = 250_000
-    max_seconds: float = 180.0
+    max_tokens: int = 500_000
+    max_seconds: float = 600.0
     max_repeats: int = 2           # 같은 도구·같은 인자 호출을 이 횟수까지만 허용
 
 

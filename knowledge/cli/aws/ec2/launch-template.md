@@ -19,8 +19,8 @@ ASG가 새 인스턴스를 띄울 때 쓰는 설정(AMI, 인스턴스 타입, �
 ## describe-launch-template-versions
 - 설명: launch template 버전별 상세(AMI ID, 인스턴스 타입, 보안 그룹, 사용자 데이터 등).
 - 키워드: 런치 템플릿 버전, 노드 AMI 확인, 현재 AMI
-- 예시: `aws ec2 describe-launch-template-versions --launch-template-name <NAME_1> --versions '$Latest' '$Default'`
-- 주의: 사용자 데이터에 민감 정보가 들어 있을 수 있다. 결과는 마스킹 스캔을 거친다.
+- 예시: `aws ec2 describe-launch-template-versions --launch-template-name <NAME_1> --versions 1 2`
+- 주의: 사용자 데이터에 민감 정보가 들어 있을 수 있다. 결과는 마스킹 스캔을 거친다. `$Latest`, `$Default` 같은 별칭은 `$` 때문에 명령 가드가 환경변수 확장으로 막으므로 버전 번호를 쓰고, 최신 번호는 `--versions` 없이 목록을 조회해 확인한다.
 
 ## describe-images
 - 설명: AMI 상세(이름, 생성일, 아키텍처). 노드 AMI가 어떤 쿠버네티스 버전용인지 이름으로 확인할 때 쓴다.

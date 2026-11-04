@@ -34,3 +34,21 @@ def test_stack_names_in_claude_constraint_exist_in_service_stack_section():
 def test_claude_md_points_to_the_stack_section_that_exists():
     assert "## 1-1. 기술 스택" in _read("SERVICE.md")
     assert "1-1절" in _read("CLAUDE.md")
+
+
+def test_no_doc_example_uses_dollar_signs_the_command_guard_would_block():
+    """문서 예시가 명령 가드의 환경변수 확장 차단(`$`)에 걸리면 모델이 문서를 따라 쓴 명령이 막힌다."""
+    from app.rag.chunks import load_chunks
+    for c in load_chunks():
+        for line in c.text.splitlines():
+            if line.lstrip().startswith(("- 예시", "예시")) or "`aws " in line or "`kubectl " in line:
+                for cmd in __import__("re").findall(r"`((?:aws|kubectl) [^`]*)`", line):
+                    assert "$" not in cmd, (c.id, cmd)
+
+
+def test_no_doc_chunk_contains_values_the_leak_scanner_flags():
+    """검색 문서 텍스트는 리랭크 등 외부 모델 경계로 그대로 나간다. 문서에 IP·ID 같은 값이 있으면 누출 검사에 걸린다(예시는 플레이스홀더로)."""
+    from app.guards.patterns import find_sensitive
+    from app.rag.chunks import load_chunks
+    for c in load_chunks():
+        assert not find_sensitive(c.text), (c.id, find_sensitive(c.text)[0][0])

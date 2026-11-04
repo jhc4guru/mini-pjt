@@ -103,3 +103,11 @@ def test_oversized_output_is_truncated_and_flagged(masker):
 def test_source_label_is_sanitized(masker):
     s = sanitize_untrusted("ok", masker, 'a"><script> b')
     assert '"><script>' not in s.text
+
+
+def test_values_followed_by_korean_particles_do_not_reach_the_masked_text(masker):
+    """한국어는 값 뒤에 조사가 붙는다. 경계가 깨져 값이 마스킹되지 않은 채 모델로 가면 안 된다."""
+    v = check_user_input("sg-0123456789abcdef0를 열고 계정 123456789012의 i-0abc123def4567890가 접근하게 10.20.0.0/16으로 허용해줘", masker)
+    assert v.allow
+    for raw in ("sg-0123456789abcdef0", "123456789012", "i-0abc123def4567890", "10.20.0.0"):
+        assert raw not in v.masked_text
