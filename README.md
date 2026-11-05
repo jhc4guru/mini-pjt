@@ -126,7 +126,18 @@ flowchart LR
 - AWS CLI v2, kubectl (문서 검증기가 실제 도움말과 대조하는 데 씁니다)
 - Bedrock 호출이 가능한 AWS 자격증명 (LLM·임베딩용. 아래 `.env`)
 
-### 설치
+### Docker로 실행 (권장, 검증 환경을 모를 때)
+이미지 안에 Python 3.14, AWS CLI v2, kubectl, 앱 패키지가 모두 들어 있어 Docker만 있으면 됩니다(WSL2의 Docker로 빌드·실행을 확인했습니다, 2026-11-05).
+```
+docker build -t devops-agent .
+docker run --rm -p 127.0.0.1:8080:8000 --env-file .env -v devops-agent-data:/data devops-agent
+```
+- 브라우저에서 `http://localhost:8080`(호스트 8080 → 컨테이너 8000, 직접 실행의 8000과 겹치지 않습니다). **호스트 쪽 포트는 반드시 `127.0.0.1`로만 여세요**(인증이 닉네임·멤버 토큰뿐입니다).
+- `.env`(Bedrock 키와 `MAIN_MODEL`·`SUB_MODEL`·`READ_MODEL`, `.env.example` 참고)는 이미지에 들어가지 않고 `--env-file`로만 전달됩니다.
+- 첫 실행은 문서 색인(Titan 임베딩, Bedrock 필요)과 DB·키를 만드느라 1분쯤 걸립니다. `data/`는 지워도 다시 만들어지고(제출 시 제외), 가드 스냅샷은 이미지에 미리 들어 있습니다.
+- 이미지는 약 1.9GB이고 첫 빌드는 3분쯤 걸립니다(kubectl은 빌드 시점 최신 stable, 고정하려면 `--build-arg KUBECTL_VERSION=v1.xx.y`).
+
+### 설치(직접 실행)
 ```powershell
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -198,7 +209,7 @@ copy inventory.example.yaml data\inventory.yaml     # 그다음 data\inventory.y
 
 평가셋을 문서 작성자가 만들어 실제 사용자 표현보다 쉬울 수 있습니다. 질의당 지연은 벡터 약 0.25초, 리랭크 약 1초입니다.
 
-자동 테스트는 2026-11-05에 기본 651개가 통과했고(7개 건너뜀), 환경변수로 켜는 Bedrock·실제 CLI 테스트 7개를 포함하면 658개가 모두 통과했습니다. 그 뒤 연습장 변경으로 테스트가 늘어 지금은 725개가 수집되며(`pytest --collect-only`, 2026-11-05), 이후 변경에서는 관련 파일(연습장·말로 수정·참조·가드·apply·서비스·웹·화면·계획 에이전트·후처리·mock 실행기·리뷰, 364개)만 실행해 통과를 확인했고 전체 실행은 하지 않았습니다. 가드레일에는 우회 시도 회귀 테스트와, 사용자 입력부터 승인 화면까지 흘려 외부 모델 경계로 실제 값이 한 번도 나가지 않음을 확인하는 종단 테스트가 있습니다.
+자동 테스트는 2026-11-05에 기본 651개가 통과했고(7개 건너뜀), 환경변수로 켜는 Bedrock·실제 CLI 테스트 7개를 포함하면 658개가 모두 통과했습니다. 그 뒤 연습장 변경으로 테스트가 늘어 지금은 796개가 수집되며(`pytest --collect-only`, 2026-11-05), 이후 변경에서는 관련 파일(연습장·말로 수정·참조·가드·apply·서비스·웹·화면·계획 에이전트·후처리·mock 실행기·리뷰, 364개)만 실행해 통과를 확인했고 전체 실행은 하지 않았습니다. 가드레일에는 우회 시도 회귀 테스트와, 사용자 입력부터 승인 화면까지 흘려 외부 모델 경계로 실제 값이 한 번도 나가지 않음을 확인하는 종단 테스트가 있습니다.
 
 ## 인-아웃 세트 통과율 (자체 평가)
 
@@ -222,6 +233,10 @@ copy inventory.example.yaml data\inventory.yaml     # 그다음 data\inventory.y
 - **세션 종단 확인(2026-11-05, `eval/run_eks_session.py`):** 같은 시나리오를 세션 서비스로 처음부터 끝까지 돌렸습니다(실제 모델, mock 실행기, 승인자 역할은 스크립트가 대신하므로 사람 검토의 대체가 아닙니다). 계획 생성 190초·303,795 토큰(6 phase·48 step, 위험 등급 high), 요청자 plan 승인은 거부되고 다른 참여자 승인 후 apply 19초에 48 step 모두 완료, 세션 `completed`. 첫 실행(58 step, 324,609 토큰)에서는 모델이 poll step을 변경 step의 확인으로 써서 자동 확인 실행이 오류로 멈췄고, 고친 뒤 회귀 테스트를 추가했습니다.
 - 실행마다 phase 수·수정 횟수가 달라 토큰이 크게 변합니다. 한도는 700,000으로 올렸습니다(D-26 재조정 2).
 - 계획은 컨트롤 플레인 업그레이드(Terraform `iac` step + poll), 애드온, 노드 교체(ASG 인스턴스 리프레시), 최종 검증으로 나뉘고, 되돌릴 수 없는 컨트롤 플레인 phase의 게이트가 잠겼으며 리뷰어 위험 등급은 high였습니다. 읽기 조회는 mock 환경에서 실제로 실행됐습니다. 결과의 정확도는 사람이 검토해야 하며 자동 채점은 아직 없습니다.
+
+## 에이전트 평가 도구 (구현됨, 전체 실행 전)
+- 평가셋 42건(`eval/agent_cases.csv`)을 실제 서비스 경로로 돌려 규칙 채점(명령·순서·금지 사항·되묻기 여부)과 선택적으로 Judge(SUB)로 채점하고 `eval/reports/`에 리포트를 남깁니다. 결과는 **아직 측정하지 않았습니다**(2026-11-05, 모델 일일 토큰 한도). 도구는 가짜 모델 테스트 17개로 확인했습니다.
+- 실행: `.venv\Scripts\python.exe eval\preflight.py`(모델 점검·오늘 사용량), `.venv\Scripts\python.exe eval\run_agent_eval.py --cases 19,20,42`(일부), `--judge`(Judge 포함), `--run-id <id>`(이어서). 토큰 사용은 `data/usage.sqlite`에 날짜·모델별로 기록됩니다.
 
 ## 트라이앤에러 회고
 

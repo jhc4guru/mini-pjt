@@ -394,7 +394,7 @@ def test_the_system_prompt_teaches_references_to_earlier_step_output_and_their_e
 def test_drafts_mode_tells_the_agent_to_use_defaults_and_not_to_ask():
     from app.planner.agent import PlanningAgent
     from app.planner.prompts import DRAFTS_NOTE
-    for phrase in ("연습장 초안 모드", "되묻지 말고", "t3.micro", "Amazon Linux 2023", "가정:", "request_clarification"):
+    for phrase in ("연습장 초안 모드", "되묻지 말고", "t3.micro", "Amazon Linux 2023", "가정:", "request_clarification", "새로 만드는 리소스의 속성", "대상이 요청에 명시되지 않았으면", "삭제·종료·정지·재시작", "새 리소스를 만들어 그 자리를 대신하지 말고"):
         assert phrase in DRAFTS_NOTE, phrase
     assert "@{" not in DRAFTS_NOTE.replace("앞 step 결과 참조", "")                                  # format을 거치지 않는 평문이라 중괄호 참조 문법을 쓰지 않는다
     pa = PlanningAgent.__new__(PlanningAgent)

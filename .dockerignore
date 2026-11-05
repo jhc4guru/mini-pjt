@@ -1,0 +1,18 @@
+# 비밀값·로컬 상태·개발 도구는 이미지에 넣지 않는다(이미지에는 코드와 지식베이스만).
+.env
+.env.*
+!.env.example
+.venv/
+.venv-eval/
+data/
+eval/reports/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.git/
+.idea/
+tests/
+ref/
+docs/
+*.md
+!README.md

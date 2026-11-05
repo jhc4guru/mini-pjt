@@ -132,15 +132,15 @@
 ## T9. 평가
 - [ ] 질문 30~50개 + 기대 명령 (다양한 표현)
 - [x] 에이전트 평가셋 `eval/agent_cases.csv` 42건(positive 16, negative 8, edge 12, guardrail 6; 41·42번은 D-30 모호 표현 해소 케이스)과 로더 `eval/agent_cases.py`, 형식·데이터 규칙 검증 `tests/test_eval_cases.py`. 실행·채점은 남음
-- [ ] 다단계 목표 질문 10~15개 + 기대 step (에이전트 계획 평가): 일부는 위 평가셋(8, 9, 15, 30번)에 포함, 기대 step 상세 채점 기준은 별도
+- [~] 다단계 목표 질문 10~15개 + 기대 step (에이전트 계획 평가): 일부는 위 평가셋(8, 9, 15, 30번)에 포함, 기대 step 상세 채점 기준은 별도
 - [ ] EKS 1.35→1.36 업그레이드 시나리오 (self-managed ASG, Terraform 환경): 기대 phase 0~5, 게이트 위치, 되돌릴 수 없는 step 표시, 사전 점검 자동 삽입 확인
 - [ ] 평가 전용 환경 `.venv-eval` 생성(`requirements-eval.txt`: ragas) + Bedrock 호환 확인
 - [~] 검색 평가: hit@k·MRR은 구현 완료(`eval/eval_retrieval.py`, 80 케이스). RAGAS(context precision·recall, faithfulness)는 남음
-- [ ] LLM-as-Judge: 고정 루브릭, JSON 스키마, temperature 0, 생성과 다른 모델(MAIN 출력은 SUB로 채점), 계획 타당성·근거 일치·폴백 판정
+- [~] LLM-as-Judge(`eval/judge.py` 구현·가짜 모델 테스트 완료, 실제 모델 실행 전): 고정 루브릭, JSON 스키마, temperature 0, 생성과 다른 모델(MAIN 출력은 SUB로 채점), 계획 타당성·근거 일치·폴백 판정
 - [ ] Judge 신뢰도: 수동 라벨 샘플 5~10개와 일치율 측정
-- [ ] 평가 리포트 `eval/reports/` (규칙 기반 + 검색 + judge 통합, 이전 실행과 비교), 평가 데이터는 플레이스홀더만 사용. 측정이 끝나면 README의 "RAGAS 평가 결과"·"인-아웃 세트 통과율"·구조도 상태를 함께 갱신
-- [ ] 자동 채점 스크립트 (정확도, 폴백 비율, 누출 여부, 계획 타당성)
-- [ ] 정확도 목표 수치 확정 (제안 90%)
+- [~] 평가 리포트 `eval/reports/`(`run_agent_eval.py`가 jsonl·md 생성, 이전 실행 비교 구현, 실제 실행 전) (규칙 기반 + 검색 + judge 통합, 이전 실행과 비교), 평가 데이터는 플레이스홀더만 사용. 측정이 끝나면 README의 "RAGAS 평가 결과"·"인-아웃 세트 통과율"·구조도 상태를 함께 갱신
+- [~] 자동 채점 스크립트(`agent_scoring.py` 구현, 42건 기계 기대 `agent_expect.py`; 폴백 비율은 미집계, 실제 실행 전)
+- [~] 정확도 목표 수치 확정 (제안 90%, 이 값으로 진행하되 첫 측정 뒤 확인, D-53)
 
 ## T10. 마무리
 - [ ] 로컬 end-to-end 시연 (탭 2개, 다른 닉네임)
@@ -182,3 +182,6 @@
 - 2026-11-05: 저위험 변경 절차의 사전 승인 구현(D-50, 사용자 선택): 확인자가 plan을 확정할 때 기준(문서 근거·위험 high 아님·중단·교체·되돌릴 수 없음 없음·추가 조치·강한 경고 없음, IaC 불일치 안내 무관)을 통과한 변경 절차의 승인도 함께 기록, apply에서는 ▶ 실행만. 확정 전 카드에 대상과 개별 승인 사유 표시, 위험 medium 배지는 숨김. 모델 중단 원인 진단: 오류 종류 기록·안내, Bedrock 읽기 제한 300초(MAIN 일일 토큰 한도 쓰로틀링을 한 번 관찰). 관련 테스트 파일만 실행
 - 2026-11-05: 반려 구현(D-51, 사용자 제안): 확인자가 plan을 코멘트(전체 필수·절차별 선택)와 함께 돌려보내면 plan은 `rejected`·세션은 `draft`, 요청자의 연습장에 반려 사유·절차별 💬가 보이고 고쳐 다시 검토를 요청해 새 plan을 확정. 대화의 "반려해줘"는 실행 제안 카드. 실제 Chrome(두 탭)으로 전 과정 확인. 관련 테스트 파일만 실행
 - 2026-11-05: 사용자 질문("랭체인·랭그래프는 안 쓴 거냐")에 따라 스택 문서를 실제 코드에 맞춤(D-52): Phase 1 에이전트는 LangGraph 없이 Bedrock 직접 호출 + 자체 도구 루프로 구현했음을 사후 기록(승인·기록 없이 벗어났던 것), LangGraph 이전은 Phase 2 supervisor 때로. `CLAUDE.md` 스택 줄, `SERVICE.md` 1-1절(웹·저장·mock 실행기의 오래된 "예정"도 "사용 중"으로)·로드맵, DECISIONS 색인 표(D-47~D-52 누락분 추가). 코드 변경 없음
+- 2026-11-05: 실제 모델 안전 점검(D-47 보완 6): 초안 모드의 "기본값으로"가 파괴적 변경의 대상을 추측하는 문제를 발견해(클러스터 삭제·보안 그룹 규칙) 프롬프트를 고침, 재점검에서 되묻기·초안 모두 기대대로. 서비스별(S3·IAM·kubectl·EKS 점검) 초안 확인. 모델 일일 토큰 한도(MAIN·SUB)로 EKS 업그레이드 재측정은 보류, 한도 조회 권한(Service Quotas·CloudWatch)은 키에 없음. `.env`는 MAIN=Sonnet 4.6, SUB=Sonnet 4.5로 D-19와 일치. 평가(T9)는 한도 때문에 모델 없이 되는 도구(시작 전 점검, 호출 토큰의 날짜별 기록, 자동 채점·Judge 루브릭)부터
+- 2026-11-05: T9 평가 도구 구현(D-53, 모델 호출 없이): 모델 토큰 사용 날짜별 기록(`app/usage.py`), 시작 전 모델 점검(`eval/preflight.py`: MAIN·SUB 쓰로틀링을 실제로 보고함), 42건 기계 기대(`agent_expect.py`), 규칙 채점·요약·이전 실행 비교·리포트(`agent_scoring.py`), Judge(`judge.py`), 이어 돌릴 수 있는 실행기(`run_agent_eval.py`). 테스트 17개(가짜 모델). **실제 모델로 평가를 돌리지는 못함**(MAIN·SUB 일일 토큰 한도). 한도가 풀리면 `preflight` 뒤 `run_agent_eval.py`로 실행
+- 2026-11-05: Docker 지원(D-54, 사용자 승인): `Dockerfile`·`.dockerignore`·`requirements-runtime.txt`, 시작 점검(aws v2·kubectl, 루프백 바인딩), `DEVOPS_DATA_DIR`. WSL2 Docker에서 실제 빌드·실행 확인 중 **리눅스에서 가드 스냅샷이 141개 중 37개만 만들어지는 문제**를 발견해 수정(groff 설치 + ANSI 서식 제거 `clean_help`, 회귀 테스트, 빌드 때 완전성 확인). 확인: 헬스·REST·WebSocket·명령 검색·명령 가드 검증(ok)·Windows localhost 접근. 루트의 `inventory.example.yaml`이 없어(`data/`에만 있음) `test_inventory_example`이 깨져 있던 것도 복원. 관련 테스트 파일만 실행

@@ -1,0 +1,54 @@
+# 인벤토리: 우리 환경의 "알려진 리소스 이름" 목록
+# ─────────────────────────────────────────────────────────────────────────────
+# 쓰임새
+#   1) 마스킹: 여기 적은 이름은 모델·임베딩·트레이스로 나가기 전에 <CLUSTER_1> 같은 플레이스홀더로 바뀐다.
+#      (계정 ID, ARN, 리소스 ID(i-…, sg-… 등), IP/CIDR, 이메일은 이 파일이 없어도 패턴으로 자동 마스킹된다.
+#       하지만 클러스터·ASG·버킷 같은 "이름"은 패턴이 없어서 여기 적어야만 가려진다.)
+#   2) lookup_inventory 도구: 에이전트가 "이 환경에 어떤 클러스터·ASG가 있는지" 조회할 때 이 목록을 쓴다.
+#      (파일이 없으면 이 도구는 항상 실패한다.)
+#   3) prod 판별: 아래 prod 목록에 있는 이름이 명령에 나오면 서버 규칙이 prod 대상으로 보고 추가 확인을 요구한다.
+#
+# 사용법
+#   - 이 파일을 data/inventory.yaml 로 복사해서 고친다(data/ 는 git에 올라가지 않는다. 실제 이름은 커밋하지 않는다).
+#       Windows:  copy inventory.example.yaml data\inventory.yaml
+#   - 다른 위치를 쓰려면 환경변수 INVENTORY_FILE 에 경로를 적는다(.env).
+#       INVENTORY_FILE을 적었는데 파일이 없으면 오류로 멈춘다(이름이 가려지지 않은 채 나가는 것을 막기 위해서다).
+#   - 고친 뒤 서버를 다시 시작한다. 마스킹이 되는지는 아래 명령으로 확인한다.
+#       .venv\Scripts\python.exe -c "from app.guards.masking import Inventory, Masker; print(Masker(Inventory.from_env()).mask('dev-main 클러스터의 rcs ASG'))"
+#       → "<CLUSTER_1> 클러스터의 <ASG_1> ASG" 처럼 나오면 정상이다.
+#
+# 작성 규칙
+#   - names 아래의 키는 카테고리 이름이다. 허용되는 것만 쓴다(오타가 있으면 시작할 때 오류로 알려 준다):
+#       CLUSTER   EKS 클러스터 이름            NODEGROUP  관리형 노드 그룹 이름
+#       ASG       Auto Scaling 그룹 이름        LT         launch template 이름
+#       BUCKET    S3 버킷 이름                  ROLE       IAM 역할 이름
+#       USER      IAM 사용자 이름               POLICY     IAM 정책 이름
+#       NAMESPACE Kubernetes 네임스페이스       NAME       위에 없는 그 밖의 이름(태그 값, 서비스 이름 등)
+#   - 이름은 따옴표 없이 적어도 되지만, 숫자로만 되었거나 콜론(:)이 들어 있으면 "큰따옴표"로 감싼다.
+#   - 이름은 "단어 단위"로 찾는다. 짧고 흔한 단어(예: ops, dev, app)는 그 단어가 쓰인 곳마다 가려지니,
+#     실제 이름이 그렇다면 그대로 적되(가려지는 쪽이 안전하다) 일반 문장이 어색해질 수 있다는 점을 알아 둔다.
+#   - 한 번 적은 이름은 요청·계획·실행 결과·화면에서 같은 플레이스홀더(<ASG_1> 등)로 일관되게 바뀐다.
+#     화면에서는 실제 이름으로 복원해 보여 주고, 저장·로그·모델에는 플레이스홀더만 남는다.
+#   - default 네임스페이스처럼 모든 곳에 있는 공개 값은 적어도 가려지지 않는다(NEVER_MASK).
+#   - 비밀번호·키·토큰은 여기에 적지 않는다(이 파일은 이름 목록일 뿐이다).
+
+names:
+  CLUSTER:
+    - example-dev-cluster          # 예) dev-main
+    # - example-stg-cluster
+  ASG:
+    - example-worker-a             # 예) 워커 노드용 Auto Scaling 그룹 이름(여러 개면 줄을 늘린다)
+    # - example-worker-b
+  # NODEGROUP: [ng-blue]           # 한 줄에 [a, b] 형태로 적어도 된다
+  # LT: [example-worker-lt]
+  # BUCKET: [example-logs]
+  # ROLE: [example-node-role]
+  # USER: []
+  # POLICY: []
+  # NAMESPACE: [payments]          # default, kube-system 같은 공개 이름은 적을 필요가 없다
+  # NAME: []
+
+# prod 로 취급할 이름(위 names 에 적은 이름 중에서 고른다). 이 이름이 대상인 명령은 추가 확인이 필요하다.
+# 비워 두면 prod 판별이 동작하지 않는다.
+prod: []
+#   - example-prod-cluster

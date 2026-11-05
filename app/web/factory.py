@@ -21,6 +21,7 @@ from app.guards.command_guard import CommandGuard, CommandIndex
 from app.guards.mapping_store import SqliteMappingStore
 from app.guards.masking import Inventory, Masker
 from app.llm import LLMClient
+from app.usage import UsageLog
 from app.planner.agent import PlanningAgent
 from app.planner.failure import FailureAnalyzer
 from app.planner.intake import Intake
@@ -40,14 +41,17 @@ class Running:
     maps: SqliteMappingStore
     executor: MockExecutor
     audit: AuditLog
+    usage: UsageLog | None = None
 
     def close(self) -> None:
         self.executor.close()
+        if self.usage is not None:
+            self.usage.close()
         self.store.close()
         self.maps.close()
 
 
-def build_service(*, data_dir: Path | None = None, retriever=None) -> Running:
+def build_service(*, data_dir: Path | None = None, retriever=None, usage_path: Path | None = None) -> Running:
     config.load_env()
     data = Path(data_dir or config.DATA_DIR)
     data.mkdir(parents=True, exist_ok=True)
@@ -62,6 +66,7 @@ def build_service(*, data_dir: Path | None = None, retriever=None) -> Running:
     store = SessionStore(data / "sessions.sqlite")
     maps = SqliteMappingStore(data / "mapping.sqlite")
     retriever = retriever or build_retriever()
+    usage = UsageLog(usage_path or data / "usage.sqlite")                       # 모델별 날짜별 토큰·쓰로틀링 기록(D-53)
 
     def toolbox(masker: Masker, sid: str, budget: AgentBudget) -> ReadToolbox:
         return ReadToolbox(masker=masker, guard=guard, retriever=retriever, runner=ReadRunnerAdapter(executor, guard, masker, session_id=sid),
@@ -69,21 +74,21 @@ def build_service(*, data_dir: Path | None = None, retriever=None) -> Running:
 
     def pipeline_factory(masker: Masker, sid: str) -> PlanPipeline:
         budget = AgentBudget()
-        llm = LLMClient(masker, budget=budget)
+        llm = LLMClient(masker, budget=budget, usage=usage)
         return PlanPipeline(Intake(llm, masker, audit=audit), PlanningAgent(llm, toolbox(masker, sid, budget), guard, masker, budget, audit=audit),
                             Reviewer(llm, masker, audit=audit), by_id)
 
     def analyzer_factory(masker: Masker) -> FailureAnalyzer:
         budget = AgentBudget()
-        llm = LLMClient(masker, budget=budget)
+        llm = LLMClient(masker, budget=budget, usage=usage)
         return FailureAnalyzer(llm, toolbox(masker, "", budget), guard, masker, budget, audit=audit)
 
     def editor_factory(masker: Masker) -> ScratchEditor:
-        return ScratchEditor(LLMClient(masker, budget=AgentBudget()), masker, audit=audit)
+        return ScratchEditor(LLMClient(masker, budget=AgentBudget(), usage=usage), masker, audit=audit)
 
     from app.rag.retriever import HybridRetriever
     service = SessionService(store, maps, executor=executor, guard=guard, pipeline_factory=pipeline_factory,
                              inventory_factory=Inventory.from_env, analyzer_factory=analyzer_factory, audit=audit,
                              catalog_retriever=HybridRetriever(chunks, vector_index=None),         # 명령 만들기 도우미: 모델을 쓰지 않는 BM25 검색
                              editor_factory=editor_factory)
-    return Running(service, store, maps, executor, audit)
+    return Running(service, store, maps, executor, audit, usage)

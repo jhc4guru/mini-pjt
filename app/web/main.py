@@ -5,8 +5,11 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 import uvicorn
+
+from app.web.startup import check_bind, check_cli_tools
 
 from app.web.factory import build_service
 from app.web.server import create_app
@@ -17,6 +20,12 @@ def main() -> None:
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8000)
     args = ap.parse_args()
+    reason = check_bind(args.host)
+    if reason:
+        sys.exit(f"시작할 수 없습니다: {reason}")
+    problems = check_cli_tools()
+    if problems:                                                                  # CLI가 없으면 서버가 떠도 모든 명령이 막힌다: 이유를 알리고 시작하지 않는다
+        sys.exit("시작할 수 없습니다. 필수 도구가 없습니다:\n- " + "\n- ".join(problems))
     running = build_service()
     try:
         uvicorn.run(create_app(running.service), host=args.host, port=args.port, log_level="info")

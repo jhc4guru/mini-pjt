@@ -99,6 +99,7 @@ class LLMClient:
         budget: AgentBudget | None = None,
         audit: AuditLog | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        usage=None,
     ):
         if client is None:
             import boto3
@@ -106,6 +107,7 @@ class LLMClient:
             # 큰 계획은 한 번의 응답이 1~3분 걸린다(출력 8K 토큰 이상). 기본 읽기 제한(60초)에 걸려 끊기지 않게 늘리고, 재시도는 우리 쪽 백오프가 맡는다(쓰로틀링을 두드리지 않게 SDK 재시도는 줄인다).
             client = boto3.client("bedrock-runtime", region_name=config.region(), config=Config(read_timeout=300, connect_timeout=10, retries={"max_attempts": 2, "mode": "standard"}))
         self._client, self._masker, self._budget, self._audit, self._sleep = client, masker, budget, audit, sleep
+        self._usage = usage                                              # `app.usage.UsageLog`(선택): 모델별 날짜별 토큰·쓰로틀링 기록(D-53)
 
     def complete(
         self, role: str, user: str, *, system: str | None = None, max_tokens: int = 1024,
@@ -158,6 +160,8 @@ class LLMClient:
                 r = self._client.converse(**body)
             except Exception as e:  # noqa: BLE001
                 if _error_code(e) in THROTTLING_CODES:
+                    if self._usage is not None and attempt == MAX_RETRIES:
+                        self._usage.record_throttle(model_id, actual)       # 재시도를 모두 쓴 쓰로틀링만 센다
                     if attempt < MAX_RETRIES:
                         self._sleep(BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)])
                         continue
@@ -169,6 +173,8 @@ class LLMClient:
             in_t, out_t = int(usage.get("inputTokens", 0)), int(usage.get("outputTokens", 0))
             if self._budget is not None:
                 self._budget.add_tokens(in_t + out_t)
+            if self._usage is not None:
+                self._usage.record_call(model_id, actual, in_t, out_t)
             return ChatResult(list(r["output"]["message"]["content"]), str(r.get("stopReason", "")), requested, actual, model_id, in_t, out_t)
         raise _Throttled  # 도달하지 않는다
 

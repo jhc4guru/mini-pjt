@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 KNOWLEDGE_DIR = ROOT / "knowledge" / "cli"   # 직접 작성한 CLI 지식베이스(원본)
-DATA_DIR = ROOT / "data"                      # 실행 중 생성물(색인, DB, 트레이스). 지워도 재생성된다
+DATA_DIR = Path(os.environ.get("DEVOPS_DATA_DIR") or ROOT / "data")      # 실행 중 생성물(색인, DB, 트레이스). 지워도 재생성된다(컨테이너에서는 DEVOPS_DATA_DIR=/data)
 
 _DEFAULT_EMBED_MODEL = "amazon.titan-embed-text-v2:0"
 

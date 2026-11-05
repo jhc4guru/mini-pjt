@@ -46,6 +46,14 @@ class CommandSpec:
         return {o.short: o.long for o in self.options.values() if o.short}
 
 
+_CSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")           # ANSI 색상·커서 제어(리눅스 groff 1.23+의 기본 서식)
+
+
+def clean_help(text: str) -> str:
+    """도움말 텍스트의 서식(글자 겹침, ANSI 제어 시퀀스)을 지운다. 윈도우 도움말은 평문이지만 리눅스(groff)는 서식이 섞여 SYNOPSIS 제목 줄을 못 찾는다(D-54)."""
+    return _CSI.sub("", re.sub(r".\x08", "", text))
+
+
 def default_runner(cmd: list[str]) -> tuple[int, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("AWS_")}
     env["AWS_PAGER"] = ""
@@ -53,7 +61,7 @@ def default_runner(cmd: list[str]) -> tuple[int, str]:
         p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60, env=env)
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         raise CliUnavailable(f"{cmd[0]} 실행 불가: {type(e).__name__}") from None
-    return p.returncode, re.sub(r".\x08", "", (p.stdout or "") + (p.stderr or ""))
+    return p.returncode, clean_help((p.stdout or "") + (p.stderr or ""))
 
 
 # ---------------- 파서 ----------------

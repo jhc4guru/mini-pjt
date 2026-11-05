@@ -223,3 +223,25 @@ def test_real_snapshot_covers_every_documented_option():
         spec = snap.get(*k)
         missing = [o for o in opts if o not in spec.options]
         assert not missing, (k, missing)
+
+
+# ---------------- Linux의 groff가 내는 서식(ANSI 색상 코드, 글자 겹침)을 지운 뒤 읽는다(D-54) ----------------
+def _ansi(s: str) -> str:
+    """groff 1.23+ 기본 출력처럼 제목·밑줄에 SGR 코드를 입힌다."""
+    out = []
+    for line in s.splitlines():
+        if line.strip().lower() in ("name", "synopsis", "description", "options"):
+            out.append(f"\x1b[1m{line}\x1b[0m")
+        else:
+            out.append(line.replace("--", "\x1b[4m--\x1b[24m", 1) if "--" in line else line)
+    return "\n".join(out)
+
+
+def test_help_text_formatted_by_groff_is_cleaned_before_parsing():
+    from app.guards.cli_snapshot import clean_help
+    formatted = _ansi(AWS_HELP)
+    assert parse_aws_help(formatted) is None                                      # 정리하지 않으면 SYNOPSIS 제목을 못 찾아 스냅샷이 없다(리눅스 컨테이너에서 모든 명령이 막힌 원인)
+    spec = parse_aws_help(clean_help(formatted))
+    assert spec is not None and spec.options == parse_aws_help(AWS_HELP).options
+    assert clean_help("N\x08NA\x08AM\x08ME\x08E \x1b[4m--x\x1b[24m") == "NAME --x"      # 글자 겹침과 SGR을 모두 지운다
+    assert clean_help("\x1b[?25h평문\x1b[K") == "평문"                              # 기타 CSI 시퀀스도 지운다

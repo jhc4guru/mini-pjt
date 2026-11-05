@@ -16,6 +16,7 @@ AWS 인프라 운영의 반복 작업(작업 계획 생성, CLI 작성)을 모�
 | 검색 | BM25(`rank-bm25` + `kiwipiepy`) + Titan 벡터(`chromadb`) + RRF + LLM 리랭크 | 사용 중 |
 | 가드레일 | 자체 구현(`app/guards/`), `pydantic` | 사용 중 |
 | 웹 | FastAPI + uvicorn, WebSocket, 빌드 도구 없는 단일 HTML/JS | 사용 중 |
+| 패키징 | Docker(Python 3.14 + AWS CLI v2 + kubectl + 앱 패키지를 한 이미지에, `requirements-runtime.txt`). 직접 설치 실행도 가능 | 사용 중(D-54, WSL2 Docker에서 빌드·실행 확인) |
 | 저장 | SQLite(감사 기록, 암호화 매핑 저장소, 세션·plan 이력), Chroma 색인, `cryptography`(AES-GCM) | 사용 중 |
 | mock 실행 | moto server + 시뮬레이터 + kubectl 고정 응답, 단일 관문 실행기(`app/executor/`) | 사용 중 |
 | 관측 | 로컬 트레이스, Langfuse(개발 단계 한정) | 예정 (T7-1) |
@@ -148,3 +149,4 @@ knowledge/cli/
 - 2026-11-05: 저위험 변경 절차의 사전 승인(D-50, 사용자 승인): 확인자가 plan을 확정할 때 기준을 통과한 변경 절차의 승인도 함께 기록해 apply의 승인 클릭을 줄임(4-eyes 유지, 요청자 본인 승인은 여전히 불가). 위험이 medium인 일반 변경(EC2 생성 등)과 IaC 불일치 안내는 기준을 막지 않음
 - 2026-11-05: 반려(D-51): 확인자가 plan을 코멘트와 함께 돌려보내면 요청자의 연습장에 반려 사유와 절차별 코멘트(💬)가 보이고, 고쳐 다시 검토를 요청하면 새 plan을 확정(승인)한다
 - 2026-11-05: 기술 스택 정리(D-52): LangGraph는 Phase 1에서 쓰지 않았고(자체 도구 루프), Phase 2 supervisor 도입 때 옮기기로 함. 1-1절의 사용 현황을 실제 코드에 맞춤(웹·저장·mock 실행기는 사용 중)
+- 2026-11-05: Docker 이미지 추가(D-54): 이미지 안에 AWS CLI v2·kubectl·앱 패키지를 넣어 검증 환경을 모를 때도 같은 환경으로 실행. 시작 시 필수 CLI 점검과 루프백 바인딩 명시 허용. 리눅스(groff) 도움말 서식 때문에 가드 스냅샷이 불완전했던 문제를 발견·수정

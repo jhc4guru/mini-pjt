@@ -1,0 +1,13 @@
+# 앱 실행에 필요한 패키지만(Docker 이미지·run 용). 전체 개발 목록은 requirements.txt, 사용하지 않는 langchain*·langgraph*는 제외(docs/DECISIONS.md D-52).
+# 버전은 검증한 .venv(Python 3.14)와 같은 최상위 버전으로 고정한다. 하위 의존성은 pip이 풀어 준다.
+boto3==1.43.123
+python-dotenv==1.2.4
+pydantic==2.14.2
+rank-bm25==0.2.2
+kiwipiepy==0.24.1
+chromadb==1.5.9
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+moto[server]==5.2.5
+cryptography==50.0.2
+pyyaml==6.0.3
