@@ -1,8 +1,6 @@
 """시작 점검(D-54): 필수 CLI가 없으면 시작을 거부하고, 루프백이 아닌 바인딩은 명시적으로 허용했을 때만 연다. Docker 파일이 비밀값을 이미지에 넣지 않는다."""
 import re
-import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -13,11 +11,11 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def runner(versions):
-    def run(cmd, **kw):
+    def run(cmd):
         out = versions.get(cmd[0])
         if out is None:
             raise FileNotFoundError(cmd[0])
-        return SimpleNamespace(returncode=0 if out else 1, stdout=out)
+        return (0 if out else 1), out
     return run
 
 

@@ -119,13 +119,22 @@ def check_plan_size(steps_per_phase: list[int], *, max_plan: int = MAX_PLAN_STEP
         raise PlanTooLarge(f"plan {sum(steps_per_phase)}개 / phase 최대 {max(steps_per_phase, default=0)}개 (상한 {max_plan}/{max_phase})")
 
 
+def parse_structured(raw: Any, model: Type[BaseModel]) -> BaseModel:
+    """모델 출력 한 번을 스키마로 검증한다. 맞지 않으면 ValidationError·ValueError. (재시도 흐름은 `validate_structured`와 `planner/structured.py`의 그래프가 정한다)"""
+    return model.model_validate_json(raw) if isinstance(raw, (str, bytes)) else model.model_validate(raw)
+
+
+def schema_violation(attempts: int, last: Exception | None) -> SchemaViolation:
+    return SchemaViolation(f"스키마 검증 실패({attempts}회): {type(last).__name__}")
+
+
 def validate_structured(call: Callable[[], Any], model: Type[BaseModel], *, max_retries: int = 2) -> BaseModel:
     """모델 출력을 스키마로 검증한다. 실패하면 재시도 상한까지 다시 호출하고, 그래도 안 되면 SchemaViolation(사람에게 넘김)."""
     last: Exception | None = None
     for _ in range(max_retries + 1):
         raw = call()
         try:
-            return model.model_validate_json(raw) if isinstance(raw, (str, bytes)) else model.model_validate(raw)
+            return parse_structured(raw, model)
         except (ValidationError, ValueError) as e:
             last = e
-    raise SchemaViolation(f"스키마 검증 실패({max_retries + 1}회): {type(last).__name__}")
+    raise schema_violation(max_retries + 1, last)

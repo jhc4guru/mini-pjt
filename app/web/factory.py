@@ -74,13 +74,13 @@ def build_service(*, data_dir: Path | None = None, retriever=None, usage_path: P
 
     def pipeline_factory(masker: Masker, sid: str) -> PlanPipeline:
         budget = AgentBudget()
-        llm = LLMClient(masker, budget=budget, usage=usage)
+        llm = LLMClient(masker, budget=budget, usage=usage, prompt_cache=True)      # 도구 루프(계획·실패 분석)만 프롬프트 캐싱을 쓴다(D-54)
         return PlanPipeline(Intake(llm, masker, audit=audit), PlanningAgent(llm, toolbox(masker, sid, budget), guard, masker, budget, audit=audit),
                             Reviewer(llm, masker, audit=audit), by_id)
 
     def analyzer_factory(masker: Masker) -> FailureAnalyzer:
         budget = AgentBudget()
-        llm = LLMClient(masker, budget=budget, usage=usage)
+        llm = LLMClient(masker, budget=budget, usage=usage, prompt_cache=True)      # 도구 루프(계획·실패 분석)만 프롬프트 캐싱을 쓴다(D-54)
         return FailureAnalyzer(llm, toolbox(masker, "", budget), guard, masker, budget, audit=audit)
 
     def editor_factory(masker: Masker) -> ScratchEditor:

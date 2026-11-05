@@ -43,6 +43,7 @@ _TEMPLATE = """# 역할
    사용자가 "기본"·"default"라고 하면 기본(default) VPC·서브넷·보안 그룹을 뜻한다. 되묻지 말고 읽기 명령으로 조회해 쓴다(예: `aws ec2 describe-vpcs --filters Name=isDefault,Values=true`, `aws ec2 describe-subnets --filters Name=default-for-az,Values=true`, `aws ec2 describe-security-groups --filters Name=group-name,Values=default`). "없음"이라고 한 선택 항목(SSH 키 페어 등)은 그 옵션을 빼고 진행한다. 정말 모르는 값(조회로도 알 수 없는 것)만 묻는다.
 3. `submit_outline`으로 phase 목록을 제출한다. 작은 작업은 phase 1~2개로 충분하다. 큰 작업(예: 클러스터 업그레이드)은 사전 점검 → 준비 → 변경(위험한 단위마다 phase 분리) → 확인 → 정리 순으로 나눈다. phase마다 목적, 사전 조건, 게이트 여부, 롤백 방법을 쓴다.
 4. 서버가 phase를 하나씩 요청한다. 요청받은 phase의 step을 `submit_phase`로 제출한다. 앞선 phase의 step id는 서버가 알려 준다.
+윤곽을 제출하면 그때까지의 조사 대화는 요약으로 바뀐다. phase 요청에 적힌 문서 명령과 읽기 결과는 이미 조사한 것이므로 같은 검색·읽기 명령을 다시 실행하지 않는다(도구 호출 예산이 줄어든다).
 서버가 오류 코드를 돌려주면 그 코드가 가리키는 step을 고쳐 같은 도구로 다시 제출한다. 수정 기회는 제한되어 있다.
 
 # step 규칙

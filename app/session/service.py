@@ -24,6 +24,7 @@ from app.guards.mapping_store import MappingStore, MappingUnreadable
 from app.guards.masking import Inventory, Masker
 from app.planner.pipeline import PipelineResult, PlanPipeline
 from app.planner.schema import Plan, PlanInvalid
+from app.session.scale import SPLIT_NOTICE, looks_large
 from app.session.apply import ApplyEngine
 from app.session.approval import AUTO, ApprovalEngine, ApprovalError
 from app.executor.adapter import ReadRunnerAdapter
@@ -221,6 +222,10 @@ class SessionService:
         return res
 
     def start_generation(self, sid: str, text: str) -> None:
+        if looks_large(text) and not self.store.get_meta(sid, "split_notice"):         # 큰 작업이면 세션당 한 번 "나눠서 요청"을 권한다(D-59). 요청은 그대로 진행한다
+            self.store.set_meta(sid, "split_notice", "1")
+            self._thread_add(sid, "assistant", SPLIT_NOTICE, kind="notice")
+            self._notify(sid)
         def work():
             try:
                 self.generate_plan(sid, text)

@@ -6,8 +6,9 @@ from __future__ import annotations
 import ipaddress
 import os
 import shutil
-import subprocess
 from typing import Callable
+
+from app.guards.cli_snapshot import CliUnavailable, default_runner   # 프로세스는 이 통로로만 띄운다(실행기·스냅샷 모듈 외 spawn 금지 테스트)
 
 INSTALL_HINT = {
     "aws": "AWS CLI v2: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html (Windows: winget install Amazon.AWSCLI)",
@@ -15,13 +16,13 @@ INSTALL_HINT = {
 }
 
 
-def _version(cmd: list[str], run: Callable | None = None) -> str | None:
+def _version(cmd: list[str], run: Callable[[list[str]], tuple[int, str]] | None = None) -> str | None:
     try:
-        p = (run or subprocess.run)(cmd, capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired):
+        code, text = (run or default_runner)(cmd)
+    except (OSError, CliUnavailable):
         return None
-    out = (p.stdout or "").strip().splitlines()
-    return out[0] if p.returncode == 0 and out else None
+    out = text.strip().splitlines()
+    return out[0] if code == 0 and out else None
 
 
 def check_cli_tools(which: Callable = shutil.which, run: Callable | None = None) -> list[str]:

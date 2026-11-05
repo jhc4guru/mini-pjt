@@ -1,6 +1,9 @@
-# 앱 실행에 필요한 패키지만(Docker 이미지·run 용). 전체 개발 목록은 requirements.txt, 사용하지 않는 langchain*·langgraph*는 제외(docs/DECISIONS.md D-52).
+# 앱 실행에 필요한 패키지만(Docker 이미지·run 용). 전체 개발 목록은 requirements.txt, 앱이 import하지 않는 langchain-community 등과 langgraph-supervisor·checkpoint·MCP 패키지는 제외(docs/DECISIONS.md D-55).
 # 버전은 검증한 .venv(Python 3.14)와 같은 최상위 버전으로 고정한다. 하위 의존성은 pip이 풀어 준다.
 boto3==1.43.123
+langchain-aws==1.9.1
+langchain-core==1.7.4
+langgraph==1.2.19
 python-dotenv==1.2.4
 pydantic==2.14.2
 rank-bm25==0.2.2

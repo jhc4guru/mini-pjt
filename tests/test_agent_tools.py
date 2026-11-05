@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.agents.tools import ReadToolbox, tool_specs
+from app.agents.tools import ReadToolbox
 from app.guards.agent_limits import READ_ONLY_TOOLS, AgentBudget, BudgetExceeded, Limits, ToolNotAllowed
 from app.guards.audit import AuditLog
 from app.guards.cli_snapshot import CliSnapshot, CliUnavailable
@@ -60,8 +60,8 @@ def env(chunks, snapshot, tmp_path):
 
 def test_tool_names_are_exactly_the_read_only_tools(env):
     _, _, _, make = env
-    assert {s["toolSpec"]["name"] for s in tool_specs()} == READ_ONLY_TOOLS
     tb = make()
+    assert {t.name for t in tb.as_tools()} == READ_ONLY_TOOLS
     for bad in ("run_command", "apply", "execute", "run_mutating_command", "kubectl", "shell"):
         with pytest.raises(ToolNotAllowed):
             tb.call(bad, {"command": "aws ec2 describe-vpcs"})

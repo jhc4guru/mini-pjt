@@ -270,7 +270,7 @@ def test_real_values_in_the_analysis_stop_it(world):
 
 def test_plain_text_and_budget_limits_stop_without_raising(world):
     make, plan, _, _ = world
-    an, _ = make([(["평문 답변"], "end_turn")] * 3)
+    an, _ = make([([{"text": "평문 답변"}], "end_turn")] * 3)
     assert an.analyze(plan, "reboot", fail(THROTTLED)).reasons == ("no_submission",)
     an, _ = make([tools(use("search_docs", {"query": "재부팅"}, "a"))], limits=Limits(max_steps=1))
     assert an.analyze(plan, "reboot", fail(THROTTLED)).reasons == ("steps_exceeded",)

@@ -16,11 +16,12 @@ from typing import Annotated
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
-from app.guards.agent_limits import SchemaViolation, validate_structured
+from app.guards.agent_limits import SchemaViolation
 from app.guards.audit import AuditLog
 from app.guards.boundary import LeakError, leak_kinds
 from app.guards.command_guard import HIGH_FLAGS
 from app.guards.masking import Masker
+from app.planner.structured import run_structured
 from app.llm import LLMClient, LLMUnavailable
 from app.planner.schema import Phase, Plan, Step
 from app.rag.chunks import Chunk
@@ -219,7 +220,7 @@ class Reviewer:
             return text[i:j + 1] if 0 <= i < j else text
 
         try:
-            m: _ReviewModel = validate_structured(call, _ReviewModel)
+            m: _ReviewModel = run_structured(call, _ReviewModel)
         except SchemaViolation:
             return self._done(session_id, ReviewResult(facts, reasons=("schema_violation",), llm_roles=tuple(roles)))
         except (LLMUnavailable, LeakError):

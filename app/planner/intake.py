@@ -17,11 +17,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.guards.agent_limits import validate_structured
 from app.guards.audit import AuditLog
 from app.guards.boundary import leak_kinds
 from app.guards.input_guard import check_user_input
 from app.guards.masking import PLACEHOLDER_RE, Masker
+from app.planner.structured import run_structured
 from app.llm import LLMClient
 from app.rag.glossary import Glossary
 
@@ -100,7 +100,7 @@ class Intake:
             roles.append(f"{r.requested_role}->{r.actual_role}")
             return _parse_json(r.text)
 
-        model: _IntakeModel = validate_structured(call, _IntakeModel)    # 실패하면 SchemaViolation(사람에게 넘김)
+        model: _IntakeModel = run_structured(call, _IntakeModel)    # 실패하면 SchemaViolation(사람에게 넘김)
 
         notes: tuple[str, ...] = ()
         if not model.in_scope:

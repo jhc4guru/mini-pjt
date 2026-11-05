@@ -6,10 +6,16 @@
 - `plan`: 검증된 `Plan`, 서버 규칙 체크리스트·위험 등급과 모델 요약(있으면), step별 근거 조각.
 - `stopped`: 모델·한도·검증 때문에 계속할 수 없어 사람에게 넘긴다.
 승인 엔진(T6)이 이 결과를 받아 plan 검토 화면으로 넘긴다. 이 모듈은 아무것도 실행하지 않는다.
+
+흐름은 LangGraph `StateGraph`다(D-53): START → intake ─(proceed)→ plan ─(plan)→ review → END. 접수가 reject·clarify이거나
+계획이 clarify·stopped면 그 자리에서 END로 간다(`result`에 최종 결과가 담긴다).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Optional, TypedDict
+
+from langgraph.graph import END, START, StateGraph
 
 from app.guards.input_guard import user_message
 from app.planner.agent import PlanningAgent, PlanResult
@@ -21,18 +27,19 @@ _MESSAGES = {
     "out_of_scope": "지원하지 않는 요청입니다. 이 도구는 AWS(EC2/보안 그룹, EKS, S3, IAM)와 kubectl 작업 계획만 다룹니다.",
     "model_output_unsafe": "모델 출력에서 민감값이 감지되어 계획을 만들지 않았습니다.",
 }
-# 계획 생성이 중단됐을 때의 안내(원인 코드별). 값은 들어 있지 않다.
+# 계획 생성이 중단됐을 때의 안내(원인 코드별). 값은 들어 있지 않다. 한도·쓰로틀링 계열에는 작업을 나눠 요청하라는 안내를 함께 준다(D-59).
+_SPLIT_HINT = "큰 작업이면 위험한 변경 직전을 경계로 나눠서(예: 사전 작업 / 사후 작업) 따로 요청해 주세요."
 _STOP_MESSAGES = {
     "repeated_call": "에이전트가 같은 조회를 반복해서 멈췄습니다(반복 호출 상한). ‘다시 시도’를 누르거나 대상(이름, 범위)을 더 구체적으로 알려 주세요.",
-    "tool_calls_exceeded": "조사에 필요한 도구 호출이 한도를 넘어 멈췄습니다. 요청 범위를 줄이거나 나눠서 요청해 주세요.",
-    "steps_exceeded": "추론 단계가 한도를 넘어 멈췄습니다. 요청 범위를 줄이거나 나눠서 요청해 주세요.",
-    "tokens_exceeded": "모델 사용량 한도를 넘어 멈췄습니다. 요청 범위를 줄이거나 나눠서 요청해 주세요.",
-    "time_exceeded": "계획 생성 시간이 한도를 넘어 멈췄습니다. ‘다시 시도’를 누르거나 요청을 나눠 주세요.",
-    "llm_unavailable": "모델을 지금 사용할 수 없습니다(요청 제한 등). 잠시 뒤 ‘다시 시도’를 눌러 주세요.",
-    "output_truncated": "모델 응답이 길이 한도에서 잘려 멈췄습니다. 요청 범위를 줄여 주세요.",
+    "tool_calls_exceeded": f"조사에 필요한 도구 호출이 한도를 넘어 멈췄습니다. 요청 범위를 줄이거나 {_SPLIT_HINT}",
+    "steps_exceeded": f"추론 단계가 한도를 넘어 멈췄습니다. 요청 범위를 줄이거나 {_SPLIT_HINT}",
+    "tokens_exceeded": f"모델 사용량 한도를 넘어 멈췄습니다. 요청 범위를 줄이거나 {_SPLIT_HINT}",
+    "time_exceeded": f"계획 생성 시간이 한도를 넘어 멈췄습니다. ‘다시 시도’를 누르거나 {_SPLIT_HINT}",
+    "llm_unavailable": "모델을 지금 사용할 수 없습니다(요청 제한·일일 사용량 한도 등). 잠시 뒤 ‘다시 시도’를 누르거나, 큰 작업이면 더 작게 나눠서(예: 사전 작업 / 사후 작업) 요청해 주세요.",
+    "output_truncated": f"모델 응답이 길이 한도에서 잘려 멈췄습니다. 요청 범위를 줄이거나 {_SPLIT_HINT}",
     "no_submission": "에이전트가 계획을 제출하지 않고 멈췄습니다. ‘다시 시도’를 눌러 주세요.",
-    "repair_exhausted": "서버 검증을 통과하는 계획을 만들지 못했습니다. 내용을 더 구체적으로 보태 주세요.",
-    "plan_too_large": "계획이 너무 커서 멈췄습니다. 작업을 나눠서 요청해 주세요.",
+    "repair_exhausted": "서버 검증을 통과하는 계획을 만들지 못했습니다. 내용을 더 구체적으로 보태 주세요. 큰 작업이면 나눠서 요청하는 것도 방법입니다(예: 사전 작업 / 사후 작업).",
+    "plan_too_large": f"계획이 너무 커서 멈췄습니다. {_SPLIT_HINT}",
     "leak_blocked": "민감값이 감지되어 모델 호출을 막았습니다.",
 }
 _LEAK_KINDS = {"resource_id": "리소스 ID", "ip": "IP/CIDR", "account_id": "계정 ID", "arn": "ARN", "access_key": "액세스 키", "email": "이메일", "name": "리소스 이름"}
@@ -62,24 +69,58 @@ class PipelineResult:
     detail: tuple[str, ...] = ()                      # 중단 부가 정보(도구 이름, 누출 종류 이름. 값 없음)
 
 
+class _PipelineState(TypedDict, total=False):
+    text: str
+    iac_managed: bool
+    session_id: Optional[str]
+    drafts: bool
+    intake: IntakeResult
+    plan_result: PlanResult
+    result: PipelineResult
+
+
 class PlanPipeline:
     def __init__(self, intake: Intake, agent: PlanningAgent, reviewer: Reviewer, chunks: dict[str, Chunk]):
         self._intake, self._agent, self._reviewer, self._chunks = intake, agent, reviewer, chunks
+        self._graph = self._build_graph()
 
     def run(self, text: str, *, iac_managed: bool = False, session_id: str | None = None, drafts: bool = False) -> PipelineResult:
-        intake = self._intake.process(text, session_id=session_id)
+        state = self._graph.invoke({"text": text, "iac_managed": iac_managed, "session_id": session_id, "drafts": drafts})
+        return state["result"]
+
+    # ---- 그래프 ----
+    def _build_graph(self):
+        g = StateGraph(_PipelineState)
+        g.add_node("intake", self._intake_node)
+        g.add_node("plan", self._plan_node)
+        g.add_node("review", self._review_node)
+        g.add_edge(START, "intake")
+        g.add_conditional_edges("intake", lambda s: "end" if "result" in s else "plan", {"plan": "plan", "end": END})
+        g.add_conditional_edges("plan", lambda s: "end" if "result" in s else "review", {"review": "review", "end": END})
+        g.add_edge("review", END)
+        return g.compile()
+
+    def _intake_node(self, state: _PipelineState) -> dict:
+        intake = self._intake.process(state["text"], session_id=state["session_id"])
         if intake.decision == "reject":
             msg = _MESSAGES.get(intake.reasons[0], "") if intake.reasons else ""
-            return PipelineResult("reject", message=msg or user_message(intake.reasons), intake=intake, reasons=intake.reasons)
+            return {"intake": intake, "result": PipelineResult("reject", message=msg or user_message(intake.reasons), intake=intake, reasons=intake.reasons)}
         if intake.decision == "clarify":
-            return PipelineResult("clarify", message="요청을 정확히 이해하려면 아래 내용을 알려 주세요.", intake=intake, questions=intake.questions)
+            return {"intake": intake, "result": PipelineResult("clarify", message="요청을 정확히 이해하려면 아래 내용을 알려 주세요.", intake=intake, questions=intake.questions)}
+        return {"intake": intake}
 
-        result = self._agent.run(intake, iac_managed=iac_managed, session_id=session_id, drafts=drafts)
+    def _plan_node(self, state: _PipelineState) -> dict:
+        intake = state["intake"]
+        result = self._agent.run(intake, iac_managed=state["iac_managed"], session_id=state["session_id"], drafts=state["drafts"])
         if result.status == "clarify":
-            return PipelineResult("clarify", message="계획을 만들려면 아래 내용을 알려 주세요.", intake=intake, plan_result=result, questions=result.questions)
+            return {"plan_result": result, "result": PipelineResult("clarify", message="계획을 만들려면 아래 내용을 알려 주세요.", intake=intake, plan_result=result, questions=result.questions)}
         if result.status != "plan" or result.plan is None:
             code = result.reasons[0] if result.reasons else "stopped"
-            return PipelineResult("stopped", message=stop_message(code, result.detail), intake=intake, plan_result=result, reasons=result.reasons, detail=result.detail)
-        review = self._reviewer.review(result.plan, session_id=session_id)
+            return {"plan_result": result, "result": PipelineResult("stopped", message=stop_message(code, result.detail), intake=intake, plan_result=result, reasons=result.reasons, detail=result.detail)}
+        return {"plan_result": result}
+
+    def _review_node(self, state: _PipelineState) -> dict:
+        result = state["plan_result"]
+        review = self._reviewer.review(result.plan, session_id=state["session_id"])
         evidence = {s.id: step_evidence(s, self._chunks) for s in result.plan.all_steps()}
-        return PipelineResult("plan", intake=intake, plan_result=result, review=review, evidence=evidence)
+        return {"result": PipelineResult("plan", intake=state["intake"], plan_result=result, review=review, evidence=evidence)}

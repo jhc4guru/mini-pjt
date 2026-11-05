@@ -112,15 +112,17 @@ def test_unknown_role_is_rejected():
 
 
 def test_chat_sends_tools_and_blocks_leaks_inside_tool_results():
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
     from app.llm import ChatResult
     c, _ = make({"m-main": ["ok"]})
-    msgs = [{"role": "user", "content": [{"text": "x"}]}]
-    r = c.chat("MAIN", msgs, system="sys", tools=[{"toolSpec": {"name": "t", "description": "d", "inputSchema": {"json": {"type": "object"}}}}])
-    assert isinstance(r, ChatResult) and r.text == "ok" and r.tool_uses == []
-    leaky = [{"role": "user", "content": [{"toolResult": {"toolUseId": "1", "content": [{"json": {"output": "sg-0123456789abcdef0"}}]}}]}]
+    spec = {"toolSpec": {"name": "t", "description": "d", "inputSchema": {"json": {"type": "object"}}}}
+    r = c.chat("MAIN", [HumanMessage(content="x")], system="sys", tools=[spec])
+    assert isinstance(r, ChatResult) and r.text == "ok" and r.tool_calls == []
+    leaky = [HumanMessage(content="x"), AIMessage(content="", tool_calls=[{"name": "t", "args": {}, "id": "1"}]),
+             ToolMessage(content='{"output": "sg-0123456789abcdef0"}', tool_call_id="1")]
     with pytest.raises(LeakError):
         c.chat("MAIN", leaky)
-    leaky_use = [{"role": "assistant", "content": [{"toolUse": {"toolUseId": "1", "name": "t", "input": {"q": "sg-0123456789abcdef0"}}}]}]
+    leaky_use = [HumanMessage(content="x"), AIMessage(content="", tool_calls=[{"name": "t", "args": {"q": "sg-0123456789abcdef0"}, "id": "1"}])]
     with pytest.raises(LeakError):
         c.chat("MAIN", leaky_use)
 
@@ -136,3 +138,99 @@ def test_a_non_throttling_error_stops_without_fallback_and_records_only_its_kind
     assert "ReadTimeoutError" in str(ex.value) and "123456789012" not in str(ex.value) and c._client.calls == ["m-main"]       # 폴백하지 않고 원인 종류만 올린다
     recs = [r["reasons"][0] for r in audit.query(session_id=None) if r["reasons"] and r["reasons"][0].startswith("llm_error")]
     assert recs and recs[0].startswith("llm_error:MAIN:ReadTimeoutError") and "123456789012" not in recs[0]
+
+
+# ---- 프롬프트 캐싱(D-54) ----
+class CacheBedrock:
+    """받은 요청을 기록하고 캐시 토큰이 든 응답을 돌려준다. `reject`면 첫 호출을 캐시 지점 거부로 실패시킨다."""
+
+    def __init__(self, reject=False, reject_message="The model does not support cachePoint blocks"):
+        self.calls, self.reject, self.reject_message = [], reject, reject_message
+
+    def converse(self, **kw):
+        import copy
+        self.calls.append(copy.deepcopy(kw))
+        if self.reject and "cachePoint" in str(kw):
+            e = Exception(self.reject_message)
+            e.response = {"Error": {"Code": "ValidationException"}}
+            raise e
+        return {"output": {"message": {"role": "assistant", "content": [{"text": "ok"}]}}, "stopReason": "end_turn",
+                "usage": {"inputTokens": 20, "outputTokens": 5, "cacheReadInputTokens": 700, "cacheWriteInputTokens": 30}}
+
+
+SPEC = {"toolSpec": {"name": "t", "description": "d", "inputSchema": {"json": {"type": "object"}}}}
+
+
+def make_cache(client, *, prompt_cache=True, audit=None):
+    return LLMClient(Masker(Inventory.from_file(FIXTURE)), client=client, prompt_cache=prompt_cache, audit=audit)
+
+
+def _has_cache_point(call) -> bool:
+    return "cachePoint" in str(call)
+
+
+def test_prompt_cache_is_off_by_default_and_for_single_shot_calls():
+    from langchain_core.messages import HumanMessage
+    fake = CacheBedrock()
+    LLMClient(Masker(Inventory.from_file(FIXTURE)), client=fake).chat("MAIN", [HumanMessage(content="x")], system="s", tools=[SPEC], cache=True)
+    assert not _has_cache_point(fake.calls[0])                           # 클라이언트가 꺼져 있으면 cache=True여도 쓰지 않는다
+    fake2 = CacheBedrock()
+    c = make_cache(fake2)
+    c.complete("MAIN", "x", system="s")
+    c.chat("MAIN", [HumanMessage(content="x")], system="s", tools=[SPEC])                       # cache=False(기본)
+    assert not any(_has_cache_point(call) for call in fake2.calls)
+
+
+def test_prompt_cache_marks_system_tools_and_conversation_and_reports_cache_tokens():
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+    fake = CacheBedrock()
+    c = make_cache(fake)
+    msgs = [HumanMessage(content="q"), AIMessage(content="", tool_calls=[{"name": "t", "args": {}, "id": "1"}]), ToolMessage(content="{}", tool_call_id="1")]
+    r = c.chat("MAIN", msgs, system="sys", tools=[SPEC], cache=True)
+    call = fake.calls[0]
+    assert any("cachePoint" in b for b in call["system"]) and any("cachePoint" in t for t in call["toolConfig"]["tools"])
+    assert any("cachePoint" in b for m in call["messages"] for b in m["content"])
+    assert (r.input_tokens, r.output_tokens, r.cache_read_tokens, r.cache_write_tokens) == (750, 5, 700, 30)       # 입력은 읽기·쓰기를 포함한 전체
+
+
+def test_the_leak_check_runs_before_a_cached_call():
+    from langchain_core.messages import HumanMessage
+    fake = CacheBedrock()
+    with pytest.raises(LeakError):
+        make_cache(fake).chat("MAIN", [HumanMessage(content="대상은 sg-0123456789abcdef0 이다")], system="s", tools=[SPEC], cache=True)
+    assert fake.calls == []
+
+
+def test_a_rejected_cache_point_falls_back_to_a_plain_request_once_and_is_audited(tmp_path):
+    from langchain_core.messages import HumanMessage
+    audit = AuditLog(tmp_path / "a.sqlite")
+    fake = CacheBedrock(reject=True)
+    c = make_cache(fake, audit=audit)
+    r = c.chat("MAIN", [HumanMessage(content="x")], system="s", tools=[SPEC], cache=True)
+    assert r.text == "ok" and [_has_cache_point(x) for x in fake.calls] == [True, False]       # 거부된 요청 뒤에 캐시 없이 한 번 다시 보냄
+    c.chat("MAIN", [HumanMessage(content="y")], system="s", tools=[SPEC], cache=True)
+    assert [_has_cache_point(x) for x in fake.calls] == [True, False, False]                    # 이후에는 캐시를 시도하지 않는다
+    assert any(r["reasons"] == ["prompt_cache_rejected:MAIN"] for r in audit.query(session_id=None))
+
+
+def test_a_validation_error_unrelated_to_cache_still_stops_without_retry():
+    from langchain_core.messages import HumanMessage
+    fake = CacheBedrock(reject=True, reject_message="Malformed input request, please reformat your input")
+    with pytest.raises(LLMUnavailable):
+        make_cache(fake).chat("MAIN", [HumanMessage(content="x")], system="s", tools=[SPEC], cache=True)
+    assert len(fake.calls) == 1
+
+
+@pytest.mark.parametrize("extra", [{}, {"cacheDetails": [{"ttl": "5m", "inputTokens": 30}]}])
+def test_cache_write_tokens_are_counted_with_or_without_ttl_details(extra):
+    """TTL별 상세가 있으면 langchain-aws가 쓰기 토큰을 `cache_creation`에서 `ephemeral_5m_input_tokens`로 옮긴다. 어느 쪽이든 30으로 집계한다."""
+    from langchain_core.messages import HumanMessage
+
+    class Fake(CacheBedrock):
+        def converse(self, **kw):
+            r = super().converse(**kw)
+            r["usage"].update(extra)
+            return r
+
+    r = make_cache(Fake()).chat("MAIN", [HumanMessage(content="x")], system="s", tools=[SPEC], cache=True)
+    assert (r.cache_read_tokens, r.cache_write_tokens) == (700, 30)

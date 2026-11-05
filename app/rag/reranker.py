@@ -8,9 +8,11 @@ from __future__ import annotations
 import json
 import re
 
-import boto3
+from langchain_aws import ChatBedrockConverse
+from langchain_core.messages import HumanMessage
 
 from app import config
+from app.llm import message_text
 
 _PROMPT = """너는 CLI 문서 검색 결과의 순위를 정하는 평가자다.
 사용자 요청에 가장 직접적으로 답하는 명령을 앞에 둔다. 요청이 조회인지 변경인지, 대상 리소스가 무엇인지를 본다.
@@ -25,10 +27,12 @@ JSON만 출력한다. 예: {{"ranking": ["id1", "id2"]}}  (가장 적합한 것�
 
 
 class LLMReranker:
-    def __init__(self, model_id: str | None = None, region: str | None = None, max_chars: int = 420):
+    def __init__(self, model_id: str | None = None, region: str | None = None, max_chars: int = 420, *, client=None):
         self.model_id = model_id or config.model_id("READ")
         self.max_chars = max_chars
-        self._client = boto3.client("bedrock-runtime", region_name=region or config.region())
+        self._chat = ChatBedrockConverse(
+            client=client, model=self.model_id, region_name=region or config.region(), temperature=0, max_tokens=300, disable_streaming=True,
+        )
 
     def rerank(self, query: str, hits: list) -> list:
         if len(hits) < 2:
@@ -38,12 +42,7 @@ class LLMReranker:
             f"- id: {h.chunk.id}\n  {h.chunk.text[: self.max_chars].replace(chr(10), ' ')}" for h in hits
         )
         try:
-            r = self._client.converse(
-                modelId=self.model_id,
-                messages=[{"role": "user", "content": [{"text": _PROMPT.format(query=query, candidates=cand)}]}],
-                inferenceConfig={"temperature": 0, "maxTokens": 300},
-            )
-            text = r["output"]["message"]["content"][0]["text"]
+            text = message_text(self._chat.invoke([HumanMessage(content=_PROMPT.format(query=query, candidates=cand))]))
             m = re.search(r"\{.*\}", text, re.S)
             order = [i for i in json.loads(m.group(0))["ranking"] if i in by_id] if m else []
         except Exception:  # noqa: BLE001

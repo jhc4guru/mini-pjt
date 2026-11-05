@@ -16,7 +16,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.agents.tools import ReadToolbox, tool_specs
+from app.agents.tools import ReadToolbox
 from app.executor.base import ExecutionResult
 from app.guards.agent_limits import READ_ONLY_TOOLS, AgentBudget, GuardLimitError
 from app.guards.audit import AuditLog
@@ -155,7 +155,7 @@ class FailureAnalyzer:
                  *, audit: AuditLog | None = None, max_repairs: int = 2):
         self._llm, self._toolbox, self._guard, self._masker, self._budget = llm, toolbox, guard, masker, budget
         self._audit, self._max_repairs = audit, max_repairs
-        self._tools = tool_specs() + SUBMIT_SPECS
+        self._tools = toolbox.as_tools() + SUBMIT_SPECS
 
     def analyze(self, plan: Plan, step_id: str, result: ExecutionResult, *, attempt: int = 1, session_id: str | None = None) -> FailureAnalysis:
         step, phase = _find_step(plan, step_id)

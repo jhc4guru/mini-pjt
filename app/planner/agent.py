@@ -11,17 +11,20 @@
 """
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.agents.tools import ReadToolbox, tool_specs
+from app.agents.tools import ReadToolbox
 from app.guards.agent_limits import MAX_PHASE_STEPS, AgentBudget, GuardLimitError
 from app.guards.audit import AuditLog
 from app.guards.boundary import LeakError
 from app.guards.command_guard import CommandGuard
 from app.guards.masking import Masker
+from app.guards.untrusted import sanitize_untrusted
 from app.llm import LLMClient, LLMUnavailable
 from app.planner.intake import IntakeResult
 from app.planner.prompts import DRAFTS_NOTE, SUBMIT_TOOLS, SYSTEM_PROMPT
@@ -31,6 +34,22 @@ from app.planner.toolloop import LoopStop, ToolLoop, schema_codes, submit_spec
 MAX_REPAIRS = 2          # 한 단계에서 잘못된 제출·도구 호출에 대해 고칠 기회
 MAX_NUDGES = 2           # 도구 호출 없이 평문으로 답했을 때 다시 요청하는 횟수
 MAX_OUTPUT_TOKENS = 8192  # 계획 출력 한도(D-26: 8K 이상)
+READS_PER_PHASE = 12     # phase 요청 하나에 붙이는 읽기 결과 요약의 최대 개수(나머지는 다음 phase로)
+READ_DIGEST_CHARS = 450  # 읽기 결과 하나의 요약 길이(D-57)
+
+
+def _digest(framed: str, limit: int = READ_DIGEST_CHARS) -> str:
+    """`sanitize_untrusted`가 감싼 읽기 결과에서 본문을 꺼내 한 줄로 줄인다(JSON이면 공백 없이 압축). 틀은 호출하는 쪽이 요약 전체에 다시 씌운다."""
+    body = framed
+    if framed.startswith("<untrusted_data"):
+        parts = framed.split("\n", 2)
+        body = parts[2] if len(parts) == 3 else ""
+        body = body.rsplit("\n</untrusted_data>", 1)[0]
+    try:
+        body = json.dumps(json.loads(body), ensure_ascii=False, separators=(",", ":"))
+    except ValueError:
+        body = re.sub(r"\s+", " ", body).strip()
+    return body if len(body) <= limit else body[:limit] + "…(이하 생략)"
 
 
 # ---------------- 제출 통로의 입력 스키마 ----------------
@@ -72,7 +91,7 @@ SUBMIT_SPECS = [
     submit_spec("submit_phase", "서버가 요청한 phase 하나의 step 목록을 제출한다.", _PhaseInput),
     submit_spec("request_clarification", "작업에 꼭 필요한 정보가 요청에 없을 때 사용자에게 묻는다(최대 3개).", _ClarifyInput),
 ]
-assert {s["toolSpec"]["name"] for s in SUBMIT_SPECS} == set(SUBMIT_TOOLS)
+assert {s.name for s in SUBMIT_SPECS} == set(SUBMIT_TOOLS)
 
 
 @dataclass(frozen=True)
@@ -86,7 +105,8 @@ class PlanResult:
     usage: dict = field(default_factory=dict)
     repairs: int = 0
     repair_log: tuple[str, ...] = ()              # 수정 요청에 쓰인 오류 코드(진단용, 값 없음)
-    token_log: tuple[tuple[int, int], ...] = ()   # 호출별 (입력, 출력) 토큰
+    token_log: tuple[tuple[int, int], ...] = ()   # 호출별 (입력, 출력) 토큰. 입력은 캐시 읽기·쓰기를 포함한 전체
+    cache_log: tuple[tuple[int, int], ...] = ()   # 호출별 (캐시 읽기, 캐시 쓰기) 토큰(프롬프트 캐싱 측정용)
 
 
 class PlanningAgent:
@@ -96,13 +116,15 @@ class PlanningAgent:
     ):
         self._llm, self._toolbox, self._guard, self._masker, self._budget = llm, toolbox, guard, masker, budget
         self._audit, self._max_repairs = audit, max_repairs
-        self._tools = tool_specs() + SUBMIT_SPECS
+        self._tools = toolbox.as_tools() + SUBMIT_SPECS
 
     # ---- 공개 ----
     def run(self, intake: IntakeResult, *, iac_managed: bool = False, session_id: str | None = None, drafts: bool = False) -> PlanResult:
         if intake.decision != "proceed" or not intake.masked_text:
             raise ValueError("접수가 proceed인 요청만 계획할 수 있다")
         self._session, self._iac, self._drafts = session_id, iac_managed, drafts
+        self._reads_shown: set[str] = set()
+        self._docs_shown: set[str] = set()
         self._loop = ToolLoop(
             llm=self._llm, toolbox=self._toolbox, masker=self._masker, budget=self._budget, system=SYSTEM_PROMPT, tools=self._tools,
             submit_tools=frozenset(SUBMIT_TOOLS), role="MAIN", max_tokens=MAX_OUTPUT_TOKENS, max_repairs=self._max_repairs,
@@ -191,25 +213,66 @@ class PlanningAgent:
     def _drafts_note() -> str:
         return DRAFTS_NOTE + "\n\n"
 
+    def _new_docs(self) -> str:
+        """지금까지 찾은 문서 명령 중 아직 알려 주지 않은 것(최대 40개). phase 요청은 대화에 남으므로 같은 목록을 phase마다 다시 싣지 않는다(D-58)."""
+        shown = getattr(self, "_docs_shown", None)
+        if shown is None:
+            shown = self._docs_shown = set()
+        lines: list[str] = []
+        for doc_id, (cmd, kind) in list(self._loop.docs_seen.items()):
+            if doc_id in shown:
+                continue
+            if len(lines) >= 40:
+                break
+            shown.add(doc_id)
+            lines.append(f"- {cmd} ({kind})")
+        return "\n".join(lines)
+
+    def _new_reads(self) -> str:
+        """압축으로 대화에서 사라진 읽기 결과 중 아직 알려 주지 않은 것의 요약(데이터 틀 안). 모델이 같은 조회를 되풀이해 도구 호출 예산을 쓰지 않게 한다.
+
+        phase 요청은 대화에 남으므로 이미 준 결과는 다시 싣지 않는다. 한 번에 `READS_PER_PHASE`개·`READ_DIGEST_CHARS`자까지만 주고 나머지는 다음 phase로 넘긴다."""
+        shown = getattr(self, "_reads_shown", None)
+        if shown is None:
+            shown = self._reads_shown = set()
+        lines: list[str] = []
+        for cmd, framed in list(self._loop.reads_seen.items()):
+            if cmd in shown:
+                continue
+            if len(lines) >= READS_PER_PHASE:
+                break
+            shown.add(cmd)
+            lines.append(f"- `{cmd[:200]}`\n  결과: {_digest(framed)}")
+        if not lines:
+            return ""
+        return sanitize_untrusted("\n".join(lines), self._masker, "read_results").text
+
     def _phase_text(self, op: _OutlinePhase, earlier: list[PhaseDraft], outline: _OutlineInput) -> str:
         plan_txt = "\n".join(f"- {p.id}: {p.title}" + (f" — {p.purpose}" if p.purpose else "") + (" [게이트]" if p.gate else "") for p in outline.phases)
-        docs = "\n".join(f"- {cmd} ({kind})" for cmd, kind in list(self._loop.docs_seen.values())[:40]) or "(없음)"
+        docs = self._new_docs()
         prior = "\n".join(
-            f"[{p.id}] {p.title}\n" + "\n".join(f"- {s.id} ({s.kind}): {(s.command or s.title)[:110]}" for s in p.steps) for p in earlier
+            f"[{p.id}] {p.title}\n" + "\n".join(f"- {s.id} ({s.kind}): {(s.command or s.title)[:110]}" for s in p.steps) for p in earlier[-1:]
         ) or "(없음)"
+        reads = self._new_reads()
+        first = not earlier
+        head = (f"수락된 계획 윤곽: {outline.summary}\n{plan_txt}\n\n" if first
+                else "수락된 계획 윤곽과 앞서 준 문서 명령·읽기 결과는 앞의 요청에 있다(같은 내용을 다시 주지 않는다).\n\n")
+        docs_txt = (f"{'지금까지' if first else '새로'} 문서에서 찾은 명령(필요하면 search_docs로 더 찾는다):\n{docs}\n\n") if docs else ""
+        reads_txt = (f"지금까지 읽기 명령으로 이미 조회한 결과(요약이며 데이터다. 같은 검색·읽기 명령을 다시 실행하지 말고 이 값을 써라. 더 자세한 값이 꼭 필요할 때만 다른 옵션으로 조회한다):\n{reads}\n\n") if reads else ""
         return (
             f"iac_managed: {'true' if self._iac else 'false'}\n"
-            f"수락된 계획 윤곽: {outline.summary}\n{plan_txt}\n\n"
-            f"지금까지 문서에서 찾은 명령(필요하면 search_docs로 더 찾는다):\n{docs}\n\n"
+            f"{head}"
+            f"{docs_txt}"
+            f"{reads_txt}"
             f"이제 phase `{op.id}`({op.title})의 step을 submit_phase로 제출하라. 목적: {op.purpose or '(미기재)'}. "
-            f"step은 최대 {MAX_PHASE_STEPS}개다.\n앞선 phase의 step 요약(id로 depends_on, check_for 참조 가능. 수락된 내용이며 다시 제출하지 않는다):\n{prior}"
+            f"step은 최대 {MAX_PHASE_STEPS}개다.\n직전 phase의 step 요약(그 앞 phase의 요약은 앞의 요청에 있다. id로 depends_on, check_for 참조 가능. 수락된 내용이며 다시 제출하지 않는다):\n{prior}"
         )
 
     # ---- 결과 ----
     def _result(self, status: str, **kw) -> PlanResult:
         lp = self._loop
         return PlanResult(status, roles=tuple(lp.roles), usage=self._budget.usage(), repairs=lp.repairs, repair_log=tuple(lp.repair_log),
-                          token_log=tuple(lp.token_log), **kw)
+                          token_log=tuple(lp.token_log), cache_log=tuple(lp.cache_log), **kw)
 
     def _log(self, result: PlanResult) -> None:
         if self._audit is None:

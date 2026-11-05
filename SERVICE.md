@@ -11,8 +11,8 @@ AWS 인프라 운영의 반복 작업(작업 계획 생성, CLI 작성)을 모�
 | 영역 | 기술 | 상태 |
 |---|---|---|
 | 언어·환경 | Python 3.14, `.venv`(앱), `.venv-eval`(RAGAS 전용) | 사용 중 (`.venv-eval`은 예정) |
-| LLM | Amazon Bedrock(`boto3`). 임베딩 Titan, 리랭크·에이전트는 `.env`의 `MAIN`/`SUB`/`READ` 모델 | 사용 중 |
-| 에이전트 | 자체 구현: Bedrock Converse 직접 호출(`app/llm.py`) + 도구 루프(`app/planner/toolloop.py`)로 계획·리뷰어·실패 분석·접수·말로 수정. LangGraph + `langchain-aws`는 Phase 2 supervisor 도입 때 이전(D-52) | 사용 중 (자체 구현) / LangGraph는 Phase 2 |
+| LLM | Amazon Bedrock. 모든 모델 호출은 `langchain-aws`: 에이전트는 `ChatBedrockConverse`(`app/llm.py`), 리랭크도 `ChatBedrockConverse`(`app/rag/reranker.py`), 임베딩은 `BedrockEmbeddings`로 Titan v2(`app/rag/embedder.py`). 모델은 `.env`의 `MAIN`/`SUB`/`READ` | 사용 중 |
+| 에이전트 | LangChain + LangGraph(D-55): `LLMClient`(`app/llm.py`)가 `langchain-core` 메시지로 `ChatBedrockConverse`를 호출하는 한 곳, 도구 루프(`app/planner/toolloop.py`)와 접수→계획→리뷰 파이프라인(`app/planner/pipeline.py`)은 `StateGraph`, 읽기 도구는 LangChain `StructuredTool`. 접수·리뷰어·말로 수정의 단발 호출은 "호출 → 스키마 검증 → 재시도"를 `app/planner/structured.py`의 그래프가 맡는다. 계획·실패 분석 도구 루프는 프롬프트 캐싱(D-56). 가드·마스킹·승인·한도는 바꾸지 않았다 | 사용 중 (`langgraph-supervisor`는 Phase 2) |
 | 검색 | BM25(`rank-bm25` + `kiwipiepy`) + Titan 벡터(`chromadb`) + RRF + LLM 리랭크 | 사용 중 |
 | 가드레일 | 자체 구현(`app/guards/`), `pydantic` | 사용 중 |
 | 웹 | FastAPI + uvicorn, WebSocket, 빌드 도구 없는 단일 HTML/JS | 사용 중 |
@@ -23,7 +23,7 @@ AWS 인프라 운영의 반복 작업(작업 계획 생성, CLI 작성)을 모�
 | 평가·테스트 | `pytest`, `eval/` 스크립트, RAGAS + LLM-as-Judge | pytest·스크립트 사용 중 / 나머지 예정 |
 
 - `ref/`는 스택을 고를 때 참고한 교육 예제(사용자 요청)이고 앱이 import하지 않는다. 참고할 예제 목록은 `docs/IMPLEMENTATION.md` 4절.
-- `requirements.txt`의 `langchain*`·`langgraph*`와 MCP 패키지(`mcp`, `fastmcp`, `langchain-mcp-adapters`)는 교육 패키지 목록에서 설치됐을 뿐 앱 코드가 import하지 않는다(LangGraph를 쓰지 않은 이유와 도입 시점은 D-52). 모델 제공자 호출은 `app/llm.py`·`app/rag/embedder.py`·`app/rag/reranker.py`의 Bedrock(`boto3`) 한 계층에 모여 있다. 선택의 이유와 대안은 `docs/DECISIONS.md`(D-04, D-14, D-15, D-16, D-27).
+- `requirements.txt`의 MCP 패키지(`mcp`, `fastmcp`, `langchain-mcp-adapters`)와 `langgraph-supervisor`·`langgraph-checkpoint-sqlite`는 교육 패키지 목록에서 설치됐을 뿐 앱 코드가 import하지 않는다(전환 결정과 쓰지 않는 것은 D-55). 에이전트의 모델 호출은 `app/llm.py` 한 곳이고, 검색의 임베딩·리랭크(`app/rag/embedder.py`·`reranker.py`)도 `langchain-aws`를 쓴다. 모델 제공자는 Bedrock이다. 선택의 이유와 대안은 `docs/DECISIONS.md`(D-04, D-14, D-15, D-16, D-27).
 
 ## 2. 사용자와 세션
 - 링크 초대로 세션 참여. 로그인 없음, 입장 시 닉네임 입력으로 사용자 구분.
@@ -130,7 +130,7 @@ knowledge/cli/
 
 ## 10. 로드맵
 - **Phase 1 (현재):** 위 내용 + plan/apply 이력 저장(재사용 대비 스키마).
-- **Phase 2:** 이력 기반 계획 재사용(LLM 호출 최소화, 승인·성공 이력만), 엑셀 계획서 import·분석·저장(형식 확인 필요), 서비스별 전문 에이전트 + supervisor(서비스 약 8개 이상 또는 서비스별 정확도 저하 시). **에이전트 계층을 LangGraph로 옮기는 일(D-52, 견적 3~5일, 사용자 승인 필요)도 이때 supervisor와 함께 한다.**
+- **Phase 2:** 이력 기반 계획 재사용(LLM 호출 최소화, 승인·성공 이력만), 엑셀 계획서 import·분석·저장(형식 확인 필요), 서비스별 전문 에이전트 + supervisor(서비스 약 8개 이상 또는 서비스별 정확도 저하 시). 에이전트 계층은 Phase 1에서 이미 LangGraph로 구현했고(D-55), supervisor는 그 그래프 위에 `langgraph-supervisor`로 얹는다.
 - **Phase 3:** 사내 테라큐브·GitHub repo 코드 수정/PR 생성(병합은 사람), AWS role 분리(plan=읽기, apply=변경) 및 실제 인증, Terraform plan/apply 연동(`iac` step 자동화). 테라큐브 연동 방식은 미확인.
 
 ## 11. 미확인/가정
@@ -150,3 +150,5 @@ knowledge/cli/
 - 2026-11-05: 반려(D-51): 확인자가 plan을 코멘트와 함께 돌려보내면 요청자의 연습장에 반려 사유와 절차별 코멘트(💬)가 보이고, 고쳐 다시 검토를 요청하면 새 plan을 확정(승인)한다
 - 2026-11-05: 기술 스택 정리(D-52): LangGraph는 Phase 1에서 쓰지 않았고(자체 도구 루프), Phase 2 supervisor 도입 때 옮기기로 함. 1-1절의 사용 현황을 실제 코드에 맞춤(웹·저장·mock 실행기는 사용 중)
 - 2026-11-05: Docker 이미지 추가(D-54): 이미지 안에 AWS CLI v2·kubectl·앱 패키지를 넣어 검증 환경을 모를 때도 같은 환경으로 실행. 시작 시 필수 CLI 점검과 루프백 바인딩 명시 허용. 리눅스(groff) 도움말 서식 때문에 가드 스냅샷이 불완전했던 문제를 발견·수정
+- 2026-11-05: 에이전트 계층을 LangChain·LangGraph로 전환(D-55, 스펙 준수. D-52 대체): `ChatBedrockConverse`, `StateGraph` 도구 루프·파이프라인, LangChain 읽기 도구, 검색 임베딩·리랭크. 도구 루프에 프롬프트 캐싱(D-56). 정책·가드는 그대로
+- 2026-11-05: 큰 요청 안내(D-59): 클러스터 업그레이드 같은 큰 작업으로 보이면 요청 직후 "나눠서 요청"을 한 번 권하고(요청은 그대로 진행), 모델 사용량·쓰로틀링 등 한도로 중단되면 오류 안내가 작업을 나눠(사전/사후) 다시 요청하라고 알림. 코드·가드·승인 규칙은 그대로

@@ -2,7 +2,7 @@
 boto3
 python-dotenv
 
-# 아래 langchain*·langgraph*·mcp 계열은 교육 패키지 목록에서 설치된 것으로 앱 코드가 import하지 않는다(docs/DECISIONS.md D-52, LangGraph는 Phase 2 supervisor 때).
+# 아래 langchain-aws·langgraph는 앱이 쓴다(langchain-core는 함께 설치됨, docs/DECISIONS.md D-55). langchain·langchain-community·langchain-classic·langchain-text-splitters·langchain-chroma·langgraph-checkpoint-sqlite·langgraph-supervisor·mcp 계열은 교육 패키지 목록에서 설치된 것으로 앱 코드가 import하지 않는다.
 langchain
 langchain-aws
 langchain-community

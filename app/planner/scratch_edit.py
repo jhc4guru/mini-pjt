@@ -13,10 +13,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.guards.agent_limits import validate_structured
 from app.guards.audit import AuditLog
 from app.guards.boundary import leak_kinds
 from app.guards.masking import Masker
+from app.planner.structured import run_structured
 from app.llm import LLMClient
 
 MAX_OPS = 8
@@ -107,7 +107,7 @@ class ScratchEditor:
             roles.append(f"{r.requested_role}->{r.actual_role}")
             return _extract(r.text)
 
-        model: _Model = validate_structured(call, _Model)
+        model: _Model = run_structured(call, _Model)
         text = " ".join([model.summary, *[json.dumps(o.model_dump(exclude_none=True), ensure_ascii=False) for o in model.ops]])
         if leak_kinds(text, self._masker) or self._masker.unresolved(text):          # 새 값·지어낸 플레이스홀더가 있으면 제안하지 않는다
             return Proposal("", (), ("model_output_unsafe",), tuple(roles))

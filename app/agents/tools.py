@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from langchain_core.tools import StructuredTool
+
 from app.guards.agent_limits import READ_ONLY_TOOLS, AgentBudget, ToolNotAllowed, RepeatedCall
 from app.guards.audit import AuditLog
 from app.guards.boundary import LeakError, assert_outbound_clean
@@ -32,19 +34,15 @@ class ReadCommandRunner(Protocol):
         """실제 값으로 복원된 읽기 명령을 실행하고 표준 출력을 돌려준다."""
 
 
-def tool_specs() -> list[dict]:
-    """Bedrock Converse `toolConfig`용 도구 정의. 이름은 READ_ONLY_TOOLS와 같아야 한다(테스트가 확인)."""
-    def spec(name, desc, props, required):
-        return {"toolSpec": {"name": name, "description": desc,
-                             "inputSchema": {"json": {"type": "object", "properties": props, "required": required}}}}
-    return [
-        spec("search_docs", "CLI 문서(명령 단위)를 검색한다. 질의는 마스킹된 자연어다.",
-             {"query": {"type": "string"}, "k": {"type": "integer", "minimum": 1, "maximum": 8}}, ["query"]),
-        spec("lookup_inventory", "알려진 리소스 이름을 플레이스홀더 형태로 조회한다(카테고리: CLUSTER, BUCKET, ROLE 등).",
-             {"category": {"type": "string"}}, ["category"]),
-        spec("run_read_command", "문서에 근거한 읽기 명령을 실행해 결과를 본다. 변경 명령은 실행되지 않는다.",
-             {"command": {"type": "string"}}, ["command"]),
-    ]
+READ_TOOL_SPECS: dict[str, tuple[str, dict, list[str]]] = {
+    "search_docs": ("CLI 문서(명령 단위)를 검색한다. 질의는 마스킹된 자연어다.",
+                    {"query": {"type": "string"}, "k": {"type": "integer", "minimum": 1, "maximum": 8}}, ["query"]),
+    "lookup_inventory": ("알려진 리소스 이름을 플레이스홀더 형태로 조회한다(카테고리: CLUSTER, BUCKET, ROLE 등).",
+                         {"category": {"type": "string"}}, ["category"]),
+    "run_read_command": ("문서에 근거한 읽기 명령을 실행해 결과를 본다. 변경 명령은 실행되지 않는다.",
+                         {"command": {"type": "string"}}, ["command"]),
+}
+assert set(READ_TOOL_SPECS) == READ_ONLY_TOOLS
 
 
 class ReadToolbox:
@@ -72,6 +70,18 @@ class ReadToolbox:
         if not isinstance(args, dict):
             return self._err(name, "bad_arguments")
         return self._handlers[name](args)
+
+    def as_tools(self) -> list[StructuredTool]:
+        """모델에 보이는 LangChain 읽기 도구. 실행은 모두 `call`(상한·반복 감지·마스킹 확인)을 거친다.
+
+        인자 검증은 `call`의 핸들러가 한다(모델이 잘못된 인자를 보내면 예외가 아니라 `bad_arguments` 오류 코드로 돌려준다).
+        그래서 인자 스키마는 모델에 보여 주는 JSON 스키마(dict)로만 두고 LangChain이 먼저 검증하지 않게 한다."""
+        def make(name: str, desc: str, props: dict, required: list[str]) -> StructuredTool:
+            return StructuredTool(
+                name=name, description=desc, args_schema={"type": "object", "properties": props, "required": required},
+                func=lambda **kw: self.call(name, kw),
+            )
+        return [make(n, d, p, r) for n, (d, p, r) in READ_TOOL_SPECS.items()]
 
     # ---- 도구 ----
     def _search_docs(self, args: dict) -> dict:
