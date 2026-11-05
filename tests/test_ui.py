@@ -47,8 +47,11 @@ def test_every_message_the_page_sends_is_accepted_by_the_service(html):
     accepted = set(re.findall(r't == "([a-z_]+)"', SERVICE.read_text(encoding="utf-8")))
     assert sent <= accepted, sent - accepted
     ops_sent = set(re.findall(r'op:"([a-z_]+)"', script_of(html)))
-    ops_accepted = set(re.findall(r'op == "([a-z_]+)"', SERVICE.read_text(encoding="utf-8")))
+    scratch = (SERVICE.parent / "scratch.py").read_text(encoding="utf-8")
+    ops_accepted = set(re.findall(r'"([a-z_]+)": self\._', scratch)) | {"undo", "redo"}                  # 연습장 연산: 서비스는 `scratch` 메시지로 넘긴다
+    ops_accepted -= {"id"}                                                                                # (`"id": self._new_id` 같은 사전 항목)
     assert ops_sent <= ops_accepted, ops_sent - ops_accepted
+    assert ops_accepted - ops_sent <= {"add_step"}, ops_accepted - ops_sent                              # 화면은 add_steps로만 추가한다(add_step은 API용)
 
 
 def test_the_page_can_send_every_approval_action(html):

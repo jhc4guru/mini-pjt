@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.guards.command_guard import CommandGuard, CommandVerdict
 from app.guards.execution_policy import ExecutionDenied, assert_server_executable
+from app.guards.refs import find_refs, has_unparsed_ref
 
 MAX_OUTPUT_CHARS = 1_000_000
 
@@ -92,6 +93,8 @@ class Executor(ABC):
         self, request: ExecutionRequest, *, verdict: CommandVerdict, approved_by_other: bool = False,
         confirmations: frozenset[str] | set[str] = frozenset(),
     ) -> ExecutionResult:
+        if "@{" in request.masked_command or "@{" in request.command or find_refs(request.command) or has_unparsed_ref(request.command):
+            raise ExecutionDenied("unresolved_reference")          # 참조는 실행 직전에 서버가 치환한 뒤에만 실행한다(D-48)
         assert_server_executable(verdict, approved_by_other=approved_by_other, confirmations=confirmations)
         if verdict.command != request.masked_command or verdict.kind != request.kind:
             raise ExecutionDenied("request_differs_from_approved")

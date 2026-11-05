@@ -44,6 +44,8 @@ def stop_message(code: str, detail: tuple[str, ...] = ()) -> str:
         kinds = ", ".join(_LEAK_KINDS.get(k, k) for k in detail) if detail else ""
         return "모델 출력에서 민감값" + (f"({kinds})" if kinds else "") + "이 감지되어 계획을 만들지 않았습니다. ‘다시 시도’를 누르거나 대상을 더 구체적으로 알려 주세요."
     msg = _STOP_MESSAGES.get(code, "계획 생성을 계속할 수 없어 중단했습니다. ‘다시 시도’를 누르거나 요청을 나눠 주세요.")
+    if code == "llm_unavailable" and detail:
+        return msg + f" (원인: {detail[0]})"
     return msg + (f" (반복된 도구: {detail[0]})" if code == "repeated_call" and detail else "")
 
 
@@ -64,7 +66,7 @@ class PlanPipeline:
     def __init__(self, intake: Intake, agent: PlanningAgent, reviewer: Reviewer, chunks: dict[str, Chunk]):
         self._intake, self._agent, self._reviewer, self._chunks = intake, agent, reviewer, chunks
 
-    def run(self, text: str, *, iac_managed: bool = False, session_id: str | None = None) -> PipelineResult:
+    def run(self, text: str, *, iac_managed: bool = False, session_id: str | None = None, drafts: bool = False) -> PipelineResult:
         intake = self._intake.process(text, session_id=session_id)
         if intake.decision == "reject":
             msg = _MESSAGES.get(intake.reasons[0], "") if intake.reasons else ""
@@ -72,7 +74,7 @@ class PlanPipeline:
         if intake.decision == "clarify":
             return PipelineResult("clarify", message="요청을 정확히 이해하려면 아래 내용을 알려 주세요.", intake=intake, questions=intake.questions)
 
-        result = self._agent.run(intake, iac_managed=iac_managed, session_id=session_id)
+        result = self._agent.run(intake, iac_managed=iac_managed, session_id=session_id, drafts=drafts)
         if result.status == "clarify":
             return PipelineResult("clarify", message="계획을 만들려면 아래 내용을 알려 주세요.", intake=intake, plan_result=result, questions=result.questions)
         if result.status != "plan" or result.plan is None:

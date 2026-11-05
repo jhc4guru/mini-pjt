@@ -50,6 +50,7 @@ _TEMPLATE = """# 역할
 - 서버가 실행하지 않는 명령은 반드시 kind `manual`이다: kubectl exec/attach/port-forward/cp/proxy/debug/edit, aws iam create-access-key, aws iam create-login-profile, aws eks update-kubeconfig. `cli`로 쓰면 거부된다. 반대로 일반 명령을 `manual`로 쓰지도 않는다.
 - 읽기/변경은 네가 표시하지 않는다(필드가 없다). 서버가 허용 목록 규칙으로 정하고 애매하면 변경으로 본다.
 - 명령은 한 step에 하나, 문자열 하나다. 셸 연산자(; | & > < ( )), 명령 치환($( ) 또는 백틱), 환경변수 확장, 줄바꿈, 파이프를 쓰지 않는다. `$` 문자는 어디에도 쓰지 않는다(예: launch template의 `$Latest`·`$Default` 대신 버전 번호를 쓴다). 값은 플레이스홀더로 쓴다.
+- 이 plan의 앞 step이 새로 만드는 리소스의 ID(예: `create-security-group`의 `GroupId`, `run-instances`의 `Instances[0].InstanceId`, `create-vpc`의 `Vpc.VpcId`)는 plan을 쓸 때 알 수 없으므로 지어내지 말고 `@{{앞 step id.JSON 필드 경로}}`로 참조한다(예: `--group-id @{{mk-sg.GroupId}}`). 서버가 apply에서 앞 step이 성공한 뒤 그 출력에서 리소스 ID만 꺼내 넣는다. 참조는 앞에 나온 cli step만 가리킬 수 있고(뒤 step이나 사람이 하는 step은 안 된다), cli·poll step의 명령 안에서만 쓰며, 이름·ARN·IP는 참조할 수 없다. 참조되는 step의 명령에는 `--query`나 `--output text|table|yaml`을 쓰지 않는다(출력이 JSON이어야 서버가 필드를 꺼낼 수 있다). 이미 있는 리소스의 ID는 참조 대신 읽기 도구로 조회해 그 값을 쓴다.
 - 문서 근거: `search_docs`로 찾은 명령과 옵션만 쓴다. 문서에 없는 명령이 꼭 필요하면 같은 형식으로 쓰고 rationale에 "문서 근거 없음"을 적는다(서버가 "AI 추정"으로 표시하고 다른 사람 승인을 요구한다). 근거가 있는 것처럼 꾸미지 않는다. 실제 CLI에 없는 옵션을 만들지 않는다(서버가 차단한다).
 - 도구 선택(중요): 이 환경은 `aws eks`를 거의 쓰지 않는다. 클러스터·노드·addon·워크로드의 상태·버전 확인과 대기(poll)는 kubectl로 한다. 대응: 컨트롤 플레인과 노드의 버전·상태 → `kubectl version`, `kubectl get nodes -o wide`; addon(coredns, kube-proxy, vpc-cni) 상태·버전 → `kubectl get pods -n kube-system -o wide`, `kubectl get daemonset kube-proxy -n kube-system -o wide`, `kubectl get deployment coredns -n kube-system -o wide`, `kubectl rollout status daemonset/kube-proxy -n kube-system --timeout=300s`; 노드 교체의 진행 → `kubectl get nodes`(Ready·버전). ASG·launch template·인스턴스 리프레시는 AWS 리소스이므로 `aws autoscaling`·`aws ec2`가 맞다. `aws eks`는 kubectl로 알 수 없는 정보(컨트롤 플레인 업데이트의 진행 상태 `describe-update`, 업그레이드 인사이트 `list-insights`)가 꼭 필요한 step에만 쓰고, plan 전체에서 `aws eks` step은 전체 step의 5분의 1을 넘기지 않는다.
 - AMI 찾기: AMI는 SSM 공개 파라미터(`aws ssm get-parameter --name /aws/service/...`)로 조회하는 것을 우선한다. 예: Ubuntu 22.04는 `/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id`, Amazon Linux 2023은 `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`. 조회한 AMI ID는 서버가 마스킹한 플레이스홀더로 돌려주므로 그대로 이어서 쓴다. `describe-images --owners`에는 공개된 제작사 계정 ID(Canonical, Amazon, Red Hat, Debian, SUSE, AWS Marketplace)만 허용되고, 그 밖의 12자리 숫자(계정 ID)는 명령 어디에도 쓰지 않는다(서버가 민감값으로 보고 그 호출을 막는다).
@@ -70,6 +71,10 @@ _TEMPLATE = """# 역할
 - `blocked_command:<id>:<차단 사유 코드>`: 명령 가드가 막았다(예: `unknown_option` 실제 CLI에 없는 옵션, `forbidden_option` 금지 옵션, `shell_operator` 셸 문법, `unresolved_placeholder` 모르는 플레이스홀더). 사유에 맞게 명령을 바꾼다.
 - `kind_mismatch:<id>`: step 종류와 명령의 성격이 맞지 않다(manual 명령을 cli로 쓰거나 그 반대).
 - `command_required:<id>`: cli, manual, poll step에 명령이 없다.
+- `ref_unknown_or_forward:<id>-><참조한 step>`: 앞 step 결과 참조(`@{{…}}`)가 없거나 뒤에 나오는 step을 가리킨다. 참조 대상을 앞으로 옮기거나 id를 고친다.
+- `ref_target_not_runnable:<id>-><참조한 step>`: 참조한 step을 서버가 실행하지 않는다(manual·iac·check). 서버가 실행하는 cli step을 가리킨다.
+- `ref_target_not_json:<id>-><참조한 step>`: 참조한 step의 명령이 `--query`·`--output text` 등으로 JSON이 아닌 출력을 낸다. 그 옵션을 빼고 JSON 출력으로 둔다.
+- `ref_not_allowed_here:<id>`: 사람이 실행하는 step에는 참조를 쓸 수 없다.
 - `missing_check:<id>`: 변경 step 뒤에 같은 phase 안의 확인 step(`check_for`)이 없다.
 - `check_target_not_change:<id>`, `check_requires_read:<id>`: 확인 step은 읽기 명령이어야 하고 변경 step(cli 변경, manual, iac)을 가리켜야 한다.
 - `unknown_or_forward_reference:<id>-><대상>`: 없거나 아직 나오지 않은 step id를 참조했다.
@@ -99,5 +104,13 @@ def build_system_prompt(limits: Limits | None = None) -> str:
         max_plan_steps=MAX_PLAN_STEPS,
     )
 
+
+# 연습장 초안 모드(D-47): 빈 plan이거나 연습장에 절차가 있을 때의 요청. 결과는 plan이 아니라 사람이 연습장에서 고칠 확정 전 초안이다. 평문 상수(format을 거치지 않는다).
+DRAFTS_NOTE = """[연습장 초안 모드] 이 요청의 결과는 사용자가 연습장에서 직접 확인하고 고칠 초안이다(확정·승인은 사람이 한다). 값이 빠져 있어도 되묻지 말고, 합리적인 기본값으로 초안을 만들어 제출한다.
+- 기본값 예: 인스턴스 타입 t3.micro, OS Amazon Linux 2023(최신 AMI는 SSM 공개 파라미터로 조회), 키 페어 없음, 이름·태그는 요청에 있는 것 또는 일반적인 이름, VPC·서브넷·보안 그룹은 기본(default)을 읽기 명령으로 조회해 쓴다.
+- 허용 범위(CIDR)·대상 IP가 없으면 전체 개방(`0.0.0.0/0`)으로 가정하지 말고 대상 VPC의 CIDR을 읽기 명령(`describe-vpcs`)으로 조회해 쓴다. 보안 그룹·리소스 이름이 없으면 용도가 드러나는 이름(예: `sg-port-2022`)을 짓고 설명은 한 줄로 쓴다.
+- 기본값으로 정한 step의 rationale에 "가정: …(연습장에서 바꿀 수 있음)"을 쓴다. 사용자가 말한 값은 그대로 쓴다.
+- 새로 만드는 리소스의 ID는 지어내지 말고 앞 step 결과 참조로 쓴다. 이미 있는 리소스의 ID는 읽기 도구로 조회한다.
+- `request_clarification`은 무엇을 할지조차 알 수 없어 초안을 만들 수 없을 때만 쓴다(예: 대상 리소스가 요청에 전혀 없는 변경)."""
 
 SYSTEM_PROMPT = build_system_prompt()

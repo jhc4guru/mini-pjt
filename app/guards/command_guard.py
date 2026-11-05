@@ -13,12 +13,14 @@ import ipaddress
 import json
 import re
 import shlex
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.guards.cli_snapshot import CliSnapshot, CliUnavailable, CommandSpec
 from app.guards.masking import LITERAL_PLACEHOLDERS, PLACEHOLDER_RE, Masker
 from app.guards.patterns import find_secrets
+from app.guards.refs import find_refs, has_unparsed_ref, with_dummy
 from app.rag.chunks import Chunk
 
 ALLOWED_CLIS = frozenset({"aws", "kubectl"})
@@ -322,8 +324,16 @@ class CommandGuard:
         self.allowed_services = frozenset(allowed_services) if allowed_services is not None else index.aws_services
 
     def check(self, command: str, masker: Masker | None = None) -> CommandVerdict:
-        """어떤 예외도 차단으로 바꾼다(fail-closed)."""
+        """어떤 예외도 차단으로 바꾼다(fail-closed). 앞 절차 결과 참조(`@{절차.필드}`, D-48)가 있으면 참조 자리를 리소스 ID 모양의 가짜 값으로
+        바꿔 템플릿을 검사하고 판정의 `command`는 원문(템플릿) 그대로 둔다(`uses_output` 표시). 실행 전에는 치환한 명령을 다시 검사한다."""
         try:
+            if isinstance(command, str) and "@{" in command:
+                if has_unparsed_ref(command):
+                    return _blocked(command, "bad_reference")
+                if len(find_refs(command)) > 4:
+                    return _blocked(command, "too_many_references")
+                v = self._check(with_dummy(command), masker)
+                return dataclasses.replace(v, command=command, flags=tuple(dict.fromkeys((*v.flags, "uses_output"))))
             return self._check(command, masker)
         except CliUnavailable:
             return _blocked(command, "cli_unavailable")

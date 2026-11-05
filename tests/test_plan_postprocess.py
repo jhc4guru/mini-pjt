@@ -127,6 +127,20 @@ def test_iac_sync_step_follows_the_check_when_iac_is_managed(env):
     assert not any(s.kind == "iac" for s in off.all_steps()) and "iac_drift:open" not in off.warnings
 
 
+def test_iac_sync_is_an_info_notice_and_does_not_raise_the_review_risk_level(env):
+    from app.planner.review import build_review
+    guard, m = env
+    sg, cidr = m.mask(SG), m.mask("10.20.0.0/16")
+    d = draft([S("open", f"aws ec2 authorize-security-group-ingress --group-id {sg} --protocol tcp --port 443 --cidr {cidr}"),
+               S("verify", f"aws ec2 describe-security-groups --group-ids {sg}", check_for="open")])
+    on, off = build_plan(d, guard, m, iac_managed=True), build_plan(d, guard, m, iac_managed=False)
+    assert any(w.startswith("iac_drift") for w in on.warnings)                                   # 계획에는 남지만
+    f_on, f_off = build_review(on), build_review(off)
+    assert not any(w.startswith(("iac_drift", "consider_iac_step")) for w in f_on.warnings)       # 주의 건수·위험 등급에는 들어가지 않는다
+    assert f_on.risk_level == f_off.risk_level
+    assert any(i.code == "iac_step" and i.status == "info" for i in f_on.checklist)               # info로만 보인다
+
+
 def test_existing_iac_step_for_the_change_is_not_duplicated(env):
     guard, m = env
     sg, cidr = m.mask(SG), m.mask("10.20.0.0/16")

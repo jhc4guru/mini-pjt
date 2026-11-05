@@ -102,7 +102,9 @@ class LLMClient:
     ):
         if client is None:
             import boto3
-            client = boto3.client("bedrock-runtime", region_name=config.region())
+            from botocore.config import Config
+            # 큰 계획은 한 번의 응답이 1~3분 걸린다(출력 8K 토큰 이상). 기본 읽기 제한(60초)에 걸려 끊기지 않게 늘리고, 재시도는 우리 쪽 백오프가 맡는다(쓰로틀링을 두드리지 않게 SDK 재시도는 줄인다).
+            client = boto3.client("bedrock-runtime", region_name=config.region(), config=Config(read_timeout=300, connect_timeout=10, retries={"max_attempts": 2, "mode": "standard"}))
         self._client, self._masker, self._budget, self._audit, self._sleep = client, masker, budget, audit, sleep
 
     def complete(
@@ -161,6 +163,7 @@ class LLMClient:
                         continue
                     raise _Throttled from None
                 # 그 밖의 오류는 폴백 없이 멈춘다. 메시지는 길이를 잘라 올린다(계정 정보가 섞일 수 있다).
+                self._log(None, False, (f"llm_error:{actual}:{type(e).__name__}:{_error_code(e) or '-'}"[:120],))      # 원인 종류만 남긴다(메시지는 계정 정보가 섞일 수 있어 남기지 않는다)
                 raise LLMUnavailable(f"{actual} 호출 실패: {type(e).__name__} {_error_code(e)}"[:120]) from None
             usage = r.get("usage", {})
             in_t, out_t = int(usage.get("inputTokens", 0)), int(usage.get("outputTokens", 0))

@@ -159,3 +159,32 @@ def test_the_requester_gets_a_fresh_invite_over_the_websocket_and_only_the_reque
         assert res2 == {"type": "result", "id": "i2", "ok": False, "code": "invite_by_requester_only"}
     assert client.post(f"/api/sessions/{sid}/join", json={"invite": c["invite"], "nick": "carol"}).status_code == 400            # 이전 링크는 무효
     assert client.post(f"/api/sessions/{sid}/join", json={"invite": res["invite"], "nick": "carol"}).status_code == 200
+
+
+def test_an_empty_plan_is_created_from_a_title_alone_and_the_scratchpad_works_over_the_websocket(web):
+    client, box = web
+    r = client.post("/api/sessions", json={"nick": "alice", "title": "빈 작업"})
+    assert r.status_code == 200
+    c = r.json()
+    sid = c["session_id"]
+    assert box.pipelines == []                                                                  # 요청이 없으면 모델이 계획을 만들지 않는다
+    with client.websocket_connect(f"/ws/{sid}") as ws:
+        v = auth(ws, c["member_token"])["data"]
+        assert v["session"]["title"] == "빈 작업" and v["scratch"]["phases"] == [] and v["pipeline"]["status"] == "manual"
+        ws.send_text(json.dumps({"type": "scratch", "op": "add_step", "step": {"id": "a", "kind": "cli", "title": "VPC 조회", "command": "aws ec2 describe-vpcs"}, "id": "1"}))
+        res = next(m for m in iter(ws.receive_json, None) if m["type"] == "result")
+        assert res["ok"] and res["added"] == ["a"]
+        view = recv_view(ws, lambda d: d["scratch"]["total"] == 1)
+        assert view["scratch"]["phases"][0]["steps"][0]["status"] == "ok" and view["scratch"]["confirmed"] == 0
+
+
+def test_catalog_search_and_unknown_scratch_messages_over_the_websocket(web):
+    client, _ = web
+    c = create(client)
+    with client.websocket_connect(f"/ws/{c['session_id']}") as ws:
+        auth(ws, c["member_token"])
+        ws.send_text(json.dumps({"type": "scratch", "op": "nope", "id": "1"}))
+        assert next(m for m in iter(ws.receive_json, None) if m["type"] == "result")["code"] == "unknown_scratch_op"
+        ws.send_text(json.dumps({"type": "suggest", "option": "--cluster-name", "id": "2"}))
+        r = next(m for m in iter(ws.receive_json, None) if m["type"] == "result")
+        assert r["ok"] and r["names"] == ["prod-db", "dev-main"]

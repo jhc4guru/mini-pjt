@@ -26,6 +26,7 @@ from app.planner.failure import FailureAnalyzer
 from app.planner.intake import Intake
 from app.planner.pipeline import PlanPipeline
 from app.planner.review import Reviewer
+from app.planner.scratch_edit import ScratchEditor
 from app.rag.chunks import load_chunks
 from app.rag.factory import build_retriever
 from app.session.service import SessionService
@@ -77,6 +78,12 @@ def build_service(*, data_dir: Path | None = None, retriever=None) -> Running:
         llm = LLMClient(masker, budget=budget)
         return FailureAnalyzer(llm, toolbox(masker, "", budget), guard, masker, budget, audit=audit)
 
+    def editor_factory(masker: Masker) -> ScratchEditor:
+        return ScratchEditor(LLMClient(masker, budget=AgentBudget()), masker, audit=audit)
+
+    from app.rag.retriever import HybridRetriever
     service = SessionService(store, maps, executor=executor, guard=guard, pipeline_factory=pipeline_factory,
-                             inventory_factory=Inventory.from_env, analyzer_factory=analyzer_factory, audit=audit)
+                             inventory_factory=Inventory.from_env, analyzer_factory=analyzer_factory, audit=audit,
+                             catalog_retriever=HybridRetriever(chunks, vector_index=None),         # 명령 만들기 도우미: 모델을 쓰지 않는 BM25 검색
+                             editor_factory=editor_factory)
     return Running(service, store, maps, executor, audit)

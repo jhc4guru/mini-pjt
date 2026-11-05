@@ -170,3 +170,9 @@ def test_every_decision_is_audited_without_input_text(env):
     rows = audit.query(session_id="s1", stage="command")
     assert len(rows) == 1 and rows[0]["subject_hash"] and rows[0]["subject_len"]      # 판정은 기록되고 입력은 길이·해시뿐
     assert "terminate" not in str(rows) and INSTANCE not in str(rows)
+
+
+def test_the_read_tool_does_not_accept_references_to_earlier_step_output(env):
+    masker, _, runner, make = env
+    r = make().call("run_read_command", {"command": "aws ec2 describe-security-groups --group-ids @{mk-sg.GroupId}"})
+    assert r["ok"] is False and r["error"] == "references_not_allowed"                          # 조사 도구에서는 앞 절차 결과를 쓸 수 없다(D-48)

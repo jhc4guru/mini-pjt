@@ -17,6 +17,8 @@ from typing import Callable
 from app.executor.base import ExecutionRequest, ExecutionResult, Executor
 from app.guards.audit import AuditLog
 from app.guards.command_guard import CommandGuard
+from app.guards.ref_resolve import RefError, resolve as resolve_refs
+from app.guards.refs import find_refs
 from app.guards.input_guard import check_user_input
 from app.guards.execution_policy import ExecutionDenied, assert_read_only_tool_call
 from app.guards.agent_limits import ToolNotAllowed
@@ -148,10 +150,32 @@ class ApplyEngine:
 
     def _exec(self, sid: str, version: int, step: Step, grant, masker: Masker) -> ExecutionResult:
         """승인 자격과 함께 실행기 관문(`Executor.execute`)으로 보낸다. 서버가 실행하는 유일한 호출 지점이다."""
-        verdict = self._guard.check(step.command, masker)
-        request = ExecutionRequest.create(kind=step.op, masked_command=step.command, command=masker.unmask(step.command),
+        command = self._resolved(sid, version, step, masker)             # 앞 절차 결과 참조(D-48)가 있으면 서버가 리소스 ID만 꺼내 치환한다
+        verdict = self._guard.check(command, masker)                    # 치환한 명령을 가드가 다시 검사한다
+        request = ExecutionRequest.create(kind=step.op, masked_command=command, command=masker.unmask(command),
                                           session_id=sid, plan_id=f"{sid}:v{version}", step_id=step.id, timeout_seconds=DEFAULT_TIMEOUT)
         return self._ex.execute(request, verdict=verdict, approved_by_other=grant.approved_by_other, confirmations=grant.confirmations)
+
+    def _resolved(self, sid: str, version: int, step: Step, masker: Masker) -> str:
+        """참조가 없으면 plan의 명령 그대로. 있으면 참조한 절차가 이 plan에서 끝났고(done) 성공 출력이 있을 때만 치환하며, 치환 결과(마스킹된 명령)를 이벤트로 남긴다."""
+        if not find_refs(step.command) and "@{" not in (step.command or ""):
+            return step.command
+        states = self._s.step_states(sid, version)
+
+        def output_of(ref_id: str) -> str:
+            if states.get(ref_id, {}).get("state") != "done":
+                raise RefError("step_not_done")
+            ok = [o for o in self._s.outputs(sid, version, ref_id) if o["status"] == "ok"]
+            if not ok:
+                raise RefError("no_output")
+            return ok[-1]["text"]
+        try:
+            resolved = resolve_refs(step.command, output_of, masker)
+        except RefError as e:
+            self._s.log(sid, "step_ref_failed", f"{step.id}: {e.code}", nick=AUTO)
+            raise
+        self._s.log(sid, "step_ref_resolved", f"{step.id}: {resolved}"[:480], nick=AUTO)
+        return resolved
 
     # ---------------- manual·iac: 사람이 실행하고 보고한다(서버는 실행하지 않는다) ----------------
     def report_done(self, sid: str, nick: str, version: int, step_id: str, *, text: str = "", checked: tuple[int, ...] | list[int] = ()) -> None:
@@ -395,6 +419,8 @@ class ApplyEngine:
         masker = self._masker_for(sid)
         if step.op != "read" or not step.command:
             raise self._deny(sid, "preview_read_only", nick)
+        if "@{" in step.command:
+            raise self._deny(sid, "preview_has_references", nick)          # 앞 절차 결과를 쓰는 명령은 그 절차가 실행되기 전에는 미리 볼 수 없다
         verdict = self._guard.check(step.command, masker)
         try:
             assert_read_only_tool_call(verdict)

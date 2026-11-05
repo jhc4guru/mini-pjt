@@ -3,8 +3,8 @@ from __future__ import annotations
 
 SESSION_TRANSITIONS: dict[str, frozenset[str]] = {
     "draft": frozenset({"plan_review", "aborted"}),
-    "plan_review": frozenset({"plan_approved", "aborted"}),
-    "plan_approved": frozenset({"applying", "plan_review", "aborted"}),
+    "plan_review": frozenset({"plan_approved", "draft", "aborted"}),                  # plan_review → draft: 확인자의 반려(코멘트와 함께 수정 요청, D-51)
+    "plan_approved": frozenset({"applying", "plan_review", "draft", "aborted"}),      # plan_approved → draft: apply 시작 전의 반려
     "applying": frozenset({"paused", "completed", "aborted"}),
     "paused": frozenset({"applying", "plan_review", "aborted"}),      # paused → plan_review: 부분 재계획(새 버전, 재승인)
     "completed": frozenset(),

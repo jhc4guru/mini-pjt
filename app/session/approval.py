@@ -122,6 +122,64 @@ class ApprovalEngine:
         self._s.set_plan_status(sid, version, "approved", nick=nick)
         self._s.set_session_state(sid, "plan_approved", nick=nick)
         self._allow(sid, "plan_approved")
+        for s in plan.all_steps():                                       # plan을 확정한 확인자(요청자가 아님)가 저위험 변경 절차의 절차별 승인도 함께 한다(D-50)
+            if s.preapprovable and self._s.add_approval(sid, version, "step", s.id, nick, meta["plan_hash"], "preapproved_with_plan"):
+                self._allow(sid, "step_preapproved")
+
+    def reject_plan(self, sid: str, nick: str, version: int, plan_hash_seen: str, step_ids: list[str]) -> None:
+        """요청자가 아닌 확인자가 검토 중이거나 승인됐지만 아직 apply 전인 plan을 반려한다(D-51). plan 버전은 `rejected`, 세션은 `draft`(연습장 수정)로 돌아간다.
+        코멘트 내용은 서비스가 마스킹해 저장하고, 여기서는 누가 어느 plan을 반려할 수 있는지만 판단한다. 승인·사전 승인 기록은 그 버전과 함께 쓸 수 없게 된다."""
+        self._member(sid, nick)
+        sess, plan, meta = self._current(sid, version)
+        if sess["state"] not in ("plan_review", "plan_approved"):
+            raise self._deny(sid, f"plan_not_rejectable:{sess['state']}", nick)
+        if nick.lower() == sess["requester"].lower():
+            raise self._deny(sid, "requester_cannot_reject_plan", nick)
+        if version != self._s.latest_version(sid) or meta["status"] not in ("draft", "approved"):
+            raise self._deny(sid, "stale_plan_version", nick)
+        if plan_hash_seen != meta["plan_hash"]:
+            raise self._deny(sid, "plan_hash_mismatch", nick)
+        known = {s.id for s in plan.all_steps()}
+        if any(i not in known for i in step_ids):
+            raise self._deny(sid, "unknown_step", nick)
+        self._s.set_plan_status(sid, version, "rejected", nick=nick)
+        self._s.set_session_state(sid, "draft", nick=nick)
+        self._allow(sid, "plan_rejected")
+
+    def preapproved_ids(self, sid: str, version: int) -> list[str]:
+        """plan 확정과 함께 사전 승인된 절차(요청자가 아닌 사람의 `preapproved_with_plan` 승인이 현재 plan 해시에 있는 것)."""
+        sess, plan, meta = self._current(sid, version)
+        requester = sess["requester"].lower()
+        rows = [a for a in self._s.approvals(sid, version, "step") if a["detail"] == "preapproved_with_plan" and a["plan_hash"] == meta["plan_hash"] and a["nick"].lower() != requester]
+        return sorted({a["target"] for a in rows})
+
+    def apply_preapprovals(self, sid: str, version: int) -> list[str]:
+        """사전 승인된 절차가 순서 조건(앞 phase 완료, 의존 완료, 게이트 승인)을 충족하면 `pending → approved`로 올린다. 실행은 사람이 한다.
+        사람의 승인과 같은 조건을 지키고, 승인 기록은 실행 직전 `grant_for`가 다시 계산한다."""
+        sess, plan, meta = self._current(sid, version)
+        if sess["state"] != "applying" or self._s.plan_meta(sid, version)["status"] != "approved":
+            return []
+        done: list[str] = []
+        for sid_ in self.preapproved_ids(sid, version):
+            st = self._s.step_states(sid, version)
+            if st[sid_]["state"] != "pending":
+                continue
+            pi, step = self._find(plan, sid_)
+            if not step.preapprovable:
+                continue
+            if not all(st[s.id]["state"] in states.SATISFIED_STEP for p in plan.phases[:pi] for s in p.steps):
+                continue
+            if any(st[d]["state"] not in states.SATISFIED_STEP for d in (*step.depends_on, *([step.check_for] if step.check_for else []))):
+                continue
+            if plan.phases[pi].gate and not self._s.approvals(sid, version, "gate", plan.phases[pi].id):
+                continue
+            if self._missing(sid, version, plan, step, st, sess["requester"]):
+                continue
+            nick = next(a["nick"] for a in self._s.approvals(sid, version, "step", sid_) if a["detail"] == "preapproved_with_plan")
+            self._s.transition_step(sid, version, sid_, "approved", expect="pending", nick=nick)
+            self._allow(sid, "preapproval_applied")
+            done.append(sid_)
+        return done
 
     def approved_version(self, sid: str) -> int:
         """apply가 따르는 버전: 최신 버전이고 승인 상태여야 한다."""

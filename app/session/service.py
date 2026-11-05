@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import sqlite3
 import threading
+import uuid
 import time
 from typing import Any, Callable
 
@@ -24,7 +26,9 @@ from app.planner.pipeline import PipelineResult, PlanPipeline
 from app.planner.schema import Plan, PlanInvalid
 from app.session.apply import ApplyEngine
 from app.session.approval import AUTO, ApprovalEngine, ApprovalError
-from app.session.edit import PlanEditor
+from app.executor.adapter import ReadRunnerAdapter
+from app.session.intents import parse_intent
+from app.session.scratch import ScratchError, ScratchPad
 from app.session.replan import ReplanEngine
 from app.session.states import InvalidTransition
 from app.session.store import SessionStore, StoreError
@@ -58,7 +62,7 @@ class SessionService:
     def __init__(self, store: SessionStore, mapping_store: MappingStore, *, executor: Executor, guard: CommandGuard,
                  pipeline_factory: Callable[[Masker, str], PlanPipeline], inventory_factory: Callable[[], Inventory] = Inventory.empty,
                  analyzer_factory: Callable[[Masker], Any] | None = None, audit: AuditLog | None = None, clock: Callable[[], float] = time.time,
-                 sleep: Callable[[float], None] = time.sleep):
+                 sleep: Callable[[float], None] = time.sleep, catalog_retriever: Any = None, editor_factory: Callable[[Masker], Any] | None = None):
         self._sleep = sleep
         self.store, self._maps = store, mapping_store
         self._pipeline_factory, self._inventory_factory, self._analyzer_factory = pipeline_factory, inventory_factory, analyzer_factory
@@ -71,8 +75,10 @@ class SessionService:
         self.apply = ApplyEngine(store, self.ap, executor, guard, self.masker_for, analyzer=self._analyze if analyzer_factory else None, audit=audit, clock=clock,
                                  on_event=self._apply_event)
         self.replan = ReplanEngine(store, self.ap)
-        self.editor = PlanEditor(guard, self.masker_for)
+        self.scratch = ScratchPad(store, self.masker_for, guard, retriever=catalog_retriever,
+                                  runner_for=lambda sid: ReadRunnerAdapter(executor, guard, self.masker_for(sid), session_id=sid))     # 연습장(초안)과 명령 만들기 도우미
         self._audit = audit
+        self._editor_factory = editor_factory
 
     # ---------------- 마스킹 매핑 ----------------
     def masker_for(self, sid: str) -> Masker:
@@ -135,8 +141,9 @@ class SessionService:
                 pass
 
     # ---------------- 세션 ----------------
-    def create(self, nick: str, title: str, text: str, *, iac_managed: bool = False) -> dict:
-        """세션을 만든다. 입력 가드가 막은 요청은 세션을 만들지 않는다. 요청 원문은 저장하지 않는다(마스킹된 문장만)."""
+    def create(self, nick: str, title: str, text: str = "", *, iac_managed: bool = False) -> dict:
+        """세션을 만든다. 입력 가드가 막은 요청은 세션을 만들지 않는다. 요청 원문은 저장하지 않는다(마스킹된 문장만).
+        요청이 비어 있으면 빈 plan(연습장) 모드로 시작한다: 모델이 계획을 만들지 않고 사용자가 직접 절차를 채운다."""
         if not isinstance(text, str) or len(text) > MAX_TEXT:
             raise ServiceError("input_rejected", user_message(("too_long",)))
         if not isinstance(title, str) or not title.strip() or len(title.strip()) > MAX_TITLE:
@@ -145,18 +152,24 @@ class SessionService:
         tv = check_user_input(title.strip(), probe)
         if not tv.allow or tv.masked_text is None:
             raise ServiceError("input_rejected", user_message(tv.reasons))
-        v = check_user_input(text, probe)
-        if not v.allow or v.masked_text is None:
+        empty = not text.strip()
+        v = None if empty else check_user_input(text, probe)
+        if v is not None and (not v.allow or v.masked_text is None):
             raise ServiceError("input_rejected", user_message(v.reasons))
         try:
-            sid, invite, token = self.store.create_session(nick, v.masked_text, iac_managed=iac_managed, title=tv.masked_text)
+            sid, invite, token = self.store.create_session(nick, "" if v is None else v.masked_text, iac_managed=iac_managed, title=tv.masked_text)
         except StoreError as e:
             raise ServiceError(e.code) from None
         self._maskers[sid] = probe                                   # 입력을 마스킹한 매핑을 그대로 이어서 쓴다
-        self._thread_add(sid, "user", v.masked_text)
-        self._set_pipeline(sid, "generating")
+        if v is None:
+            self.store.set_meta(sid, "manual_session", "1")                                # 빈 plan 모드: 에이전트의 결과는 plan이 아니라 초안으로 연습장에 덧붙는다
+            self._set_pipeline(sid, "manual", "빈 plan입니다. 가운데에서 절차를 직접 추가하거나, 오른쪽 대화에서 작업을 설명하면 에이전트가 초안을 만듭니다.")
+            self._thread_add(sid, "assistant", "빈 plan으로 시작했습니다. 가운데의 ‘명령 만들기’로 절차를 직접 추가하거나, 여기에 작업을 설명하면 초안을 만들어 드립니다.")
+        else:
+            self._thread_add(sid, "user", v.masked_text)
+            self._set_pipeline(sid, "generating")
         self._persist(sid)
-        return {"session_id": sid, "invite": invite, "member_token": token}
+        return {"session_id": sid, "invite": invite, "member_token": token, "empty": v is None}
 
     def join(self, sid: str, invite: str, nick: str) -> dict:
         try:
@@ -177,7 +190,9 @@ class SessionService:
         """요청 문장으로 계획을 만든다(동기). 성공하면 plan 검토로 넘어간다."""
         sess = self.store.session(sid)
         masker = self.masker_for(sid)
-        res = self._pipeline_factory(masker, sid).run(text, iac_managed=bool(sess["iac_managed"]), session_id=sid)
+        drafts_mode = self._drafts_mode(sid)                       # 결과를 초안으로만 덧붙일지(빈 plan이거나 연습장에 절차가 있을 때)
+        # 어느 세션이든 에이전트는 빠진 값을 되묻지 않고 기본값으로 만든다: 결과는 연습장에서 고칠 수 있다(D-47)
+        res = self._pipeline_factory(masker, sid).run(text, iac_managed=bool(sess["iac_managed"]), session_id=sid, drafts=True)
         meta = {"status": res.status, "message": res.message, "questions": list(res.questions), "reasons": list(res.reasons), "detail": list(res.detail),
                 "interpretations": list(res.intake.interpretations) if res.intake else []}
         if res.status != "plan":
@@ -187,8 +202,19 @@ class SessionService:
             if res.review is not None:
                 self.store.set_meta(sid, "review", json.dumps(dataclasses.asdict(res.review), ensure_ascii=False, default=list))
             self.store.set_meta(sid, "evidence", json.dumps(res.evidence, ensure_ascii=False, default=list))
-            self.ap.submit_plan(sid, self.store.requester_of(sid), res.plan_result.plan)
-            self._thread_add(sid, "assistant", "계획을 만들었습니다. 아래에서 검토하고, 다른 참여자가 승인하면 apply를 시작할 수 있습니다.")
+            if drafts_mode:
+                added = self.scratch.import_as_drafts(sid, res.plan_result.plan)           # 빈 plan 모드: 확정하지 않은 초안으로만 덧붙인다
+                self._thread_add(sid, "assistant", f"초안 {len(added)}개를 연습장에 추가했습니다. 확인하고 고친 뒤 검토 요청에 포함해 [검토 요청]을 누르세요.")
+            else:
+                self.ap.submit_plan(sid, self.store.requester_of(sid), res.plan_result.plan)
+                self.scratch.import_plan(sid, res.plan_result.plan)                        # 연습장에서 고치고 지울 수 있게 같은 절차로 채운다
+                self._thread_add(sid, "assistant", "계획을 만들었습니다. 아래에서 검토하고, 다른 참여자가 승인하면 apply를 시작할 수 있습니다.")
+        if drafts_mode and res.status == "plan":
+            meta = {**meta, "status": "manual", "message": "초안을 연습장에 추가했습니다. 더 요청하거나 직접 고치세요."}      # 초안 모드는 계속 요청할 수 있다
+        elif drafts_mode and res.status in ("clarify", "reject", "stopped"):
+            meta = {**meta, "status": "manual"}                                                  # 연습장은 막히지 않는다: 되묻기·거절·중단 뒤에도 계속 요청하거나 직접 쓸 수 있다
+            if res.status == "stopped":
+                self._thread_add(sid, "assistant", "초안 요청이 중단되었습니다. 연습장에서 직접 쓰거나 내용을 바꿔 다시 요청해 보세요.")
         self.store.set_meta(sid, "pipeline", json.dumps(meta, ensure_ascii=False, default=list))      # 상태는 모든 준비가 끝난 뒤 마지막에 바꾼다(중간 상태가 화면에 보이지 않게)
         self._persist(sid)
         self._notify(sid)
@@ -199,9 +225,15 @@ class SessionService:
             try:
                 self.generate_plan(sid, text)
             except Exception as e:                                   # 예외 내용(값이 섞일 수 있음)은 남기지 않고 종류만 남긴다
-                self._set_pipeline(sid, "stopped", "계획 생성 중 오류가 나 중단했습니다. 내용을 보태서 다시 보내 주세요.", reasons=[type(e).__name__])
-                self._thread_add(sid, "assistant", "계획 생성 중 오류가 나 중단했습니다. 내용을 보태서 다시 보내 주세요.")
-                self._notify(sid)
+                kind = type(e).__name__
+                msg = ("문서 검색용 임베딩 모델을 사용할 수 없어 중단했습니다(모델 접근 권한·설정을 확인하세요). 연습장에서는 직접 쓸 수 있습니다."
+                       if kind == "EmbeddingError" else "계획 생성 중 오류가 나 중단했습니다. 내용을 보태서 다시 보내 주세요.")
+                try:
+                    self._set_pipeline(sid, "manual" if self._drafts_mode(sid) else "stopped", msg, reasons=[kind])
+                    self._thread_add(sid, "assistant", msg)
+                    self._notify(sid)
+                except sqlite3.ProgrammingError:                     # 서버·테스트가 이미 저장소를 닫은 뒤의 오류 기록은 남길 곳이 없다
+                    pass
         t = threading.Thread(target=work, name=f"plan-{sid[:6]}", daemon=True)
         t.start()
 
@@ -213,6 +245,215 @@ class SessionService:
         t = self._thread(sid)
         t.append({"role": role, "text": text[:1500], "ts": time.time(), **({"kind": kind} if kind else {})})
         self.store.set_meta(sid, "thread", json.dumps(t[-60:], ensure_ascii=False))
+
+    # ---------------- 말로 하는 수정 요청: 모델은 수정안만 제안하고 사람이 수락해야 적용한다 ----------------
+    def _propose_edit(self, sid: str, nick: str, text: str) -> None:
+        if self.store.role_of(sid, nick) is None:
+            raise ApprovalError("not_a_participant")
+        if self.store.session(sid)["state"] in ("completed", "aborted"):
+            raise ServiceError("session_closed")
+        if self.store.get_meta(sid, "proposing") or (json.loads(self.store.get_meta(sid, "pipeline") or "{}").get("status") == "generating"):
+            raise ServiceError("busy")
+        v = check_user_input(text, self.masker_for(sid))
+        if not v.allow or v.masked_text is None:
+            raise ServiceError("input_rejected", user_message(v.reasons))
+        sc = self.scratch.get(sid)
+        intent = parse_intent(v.masked_text, self._step_ids(sid, sc))
+        if intent is not None:                                                   # "apply 진행해줘" 같은 진행 요청: 모델 없이 실행 제안 카드로(D-49)
+            self._propose_action(sid, nick, intent, v.masked_text)
+            return
+        if self._editor_factory is None:
+            raise ServiceError("edit_unavailable")
+        if not sc.steps():
+            raise ServiceError("nothing_to_edit")
+        self._thread_add(sid, "user", v.masked_text, kind="edit")
+        self.store.set_meta(sid, "proposing", "1")
+        steps = [{"id": s.id, "kind": s.kind, "title": s.title, "command": s.command, "confirmed": s.confirmed, "phase": p.id} for p in sc.phases for s in p.steps]
+        masked = v.masked_text
+
+        def work():
+            try:
+                pr = self._editor_factory(self.masker_for(sid)).propose(masked, steps, session_id=sid)
+                if pr.ops:
+                    pid = uuid.uuid4().hex[:8]
+                    self.store.set_meta(sid, "proposal", json.dumps({"id": pid, "summary": pr.summary, "ops": list(pr.ops), "by": nick, "status": "open"}, ensure_ascii=False))
+                    self._thread_add(sid, "assistant", f"수정안을 만들었습니다: {pr.summary}\n아래에서 확인하고 수락하거나 무시하세요. 수락하기 전에는 연습장이 바뀌지 않습니다.", kind="proposal")
+                else:
+                    msg = {"model_output_unsafe": "수정안에 민감값 형태가 있어 버렸습니다. 요청을 바꿔 다시 말씀해 주세요.", "no_change": pr.summary}.get(
+                        pr.reasons[0] if pr.reasons else "", "서버 규칙에 맞는 수정안을 만들지 못했습니다. 더 구체적으로 말씀해 주세요.")
+                    self._thread_add(sid, "assistant", msg)
+            except sqlite3.ProgrammingError:
+                return
+            except Exception as e:                                   # 내용은 남기지 않고 종류만
+                try:
+                    self._thread_add(sid, "assistant", "수정안을 만드는 중 오류가 나 중단했습니다(" + type(e).__name__ + "). 연습장에서 직접 고칠 수 있습니다.")
+                except sqlite3.ProgrammingError:
+                    return
+            finally:
+                try:
+                    self.store.set_meta(sid, "proposing", "")
+                    self._notify(sid)
+                except sqlite3.ProgrammingError:
+                    pass
+        threading.Thread(target=work, name=f"edit-{sid[:6]}", daemon=True).start()
+
+    # ---------------- 반려: 확인자가 코멘트와 함께 수정을 요청한다(D-51) ----------------
+    def _reject(self, sid: str, nick: str, m: dict) -> None:
+        summary = _need(m, "summary", str).strip()
+        raw_steps = _need(m, "steps", dict, optional=True, default={}) or {}
+        if not summary:
+            raise ServiceError("comment_required")
+        if len(summary) > 500 or len(raw_steps) > 40:
+            raise ServiceError("comment_too_long")
+        masker = self.masker_for(sid)
+
+        def clean(text: str, limit: int) -> str:
+            v = check_user_input(text, masker)
+            if len(text) > limit or not v.allow or v.masked_text is None:
+                raise ServiceError("input_rejected", user_message(v.reasons) if not v.allow else "코멘트가 너무 깁니다.")
+            return v.masked_text
+        masked_summary = clean(summary, 500)
+        steps = {str(k): clean(str(x).strip(), 300) for k, x in raw_steps.items() if isinstance(x, str) and x.strip()}
+        self.ap.reject_plan(sid, nick, _need(m, "version", int), _need(m, "hash", str), list(steps))
+        self.store.set_meta(sid, "rejection", json.dumps({"version": _need(m, "version", int), "by": nick, "ts": time.time(), "summary": masked_summary, "steps": steps}, ensure_ascii=False))
+        extra = f" (절차 코멘트 {len(steps)}건)" if steps else ""
+        self._thread_add(sid, "assistant", f"{nick}님이 plan을 반려했습니다{extra}: {masked_summary}\n코멘트를 보고 연습장에서 고친 뒤 다시 검토를 요청하세요.", kind="reject")
+
+    # ---------------- 대화로 하는 진행 요청 → 실행 제안 카드(D-49) ----------------
+    def _step_ids(self, sid: str, sc) -> set[str]:
+        ids = {s.id for s in sc.steps()}
+        v = self.store.latest_version(sid)
+        if v is not None:
+            ids |= {s.id for s in self.store.load_plan(sid, v).all_steps()}
+        return ids
+
+    def _propose_action(self, sid: str, nick: str, intent, masked_text: str) -> None:
+        self._thread_add(sid, "user", masked_text, kind="edit")
+        action, why = self._action_for(sid, nick, intent, masked_text)
+        if action is None:
+            self._thread_add(sid, "assistant", why)
+            return
+        pid = uuid.uuid4().hex[:8]
+        self.store.set_meta(sid, "proposal", json.dumps({"id": pid, "summary": action["label"], "action": action, "by": nick, "status": "open"}, ensure_ascii=False))
+        self._thread_add(sid, "assistant", f"실행 제안을 만들었습니다: {action['label']}\n카드의 버튼을 눌러야 실행됩니다. 누르는 사람의 권한으로 처리되고 서버의 승인 규칙이 그대로 적용됩니다.", kind="proposal")
+
+    def _action_for(self, sid: str, nick: str, intent, text: str = "") -> tuple[dict | None, str]:
+        """지금 세션 상태에서 할 수 있는 동작 하나를 `action`(정식 메시지 + 표시용 label·who)으로 만든다. 못 하면 (None, 이유)."""
+        sess = self.store.session(sid)
+        state, is_req = sess["state"], nick.lower() == sess["requester"].lower()
+        v = self.store.latest_version(sid)
+        k = intent.kind
+        if k == "send_review":
+            n = sum(1 for s in self.scratch.get(sid).steps() if s.confirmed)
+            if state not in ("draft", "plan_review", "plan_approved", "paused"):
+                return None, "지금은 검토를 요청할 수 없습니다(apply 진행 중이면 일시정지 후 요청하세요)."
+            if n == 0:
+                return None, "검토 요청에 포함한 절차가 없습니다. 연습장에서 절차의 체크박스를 먼저 눌러 주세요."
+            return {"type": "send_to_apply", "label": f"검토 요청 (절차 {n}개)", "who": "requester"}, ""
+        if k == "reject_plan":
+            if state not in ("plan_review", "plan_approved"):
+                return None, "반려할 plan이 없습니다(검토 요청 뒤, apply 시작 전에만 반려할 수 있습니다)."
+            if is_req:
+                return None, "요청자는 자기 plan을 반려할 수 없습니다. 연습장에서 고치고 다시 검토를 요청하세요."
+            if v is None:
+                return None, "반려할 plan이 없습니다."
+            return {"type": "reject_plan", "version": v, "hash": self.store.plan_meta(sid, v)["plan_hash"], "summary": text[:500], "steps": {}, "label": f"plan v{v} 반려(수정 요청): {text[:80]}", "who": "approver"}, ""
+        if k == "start_apply":
+            if state == "plan_approved":
+                return {"type": "start_apply", "label": "apply 시작", "who": "requester"}, ""
+            why = {"plan_review": "아직 apply를 시작할 수 없습니다. 요청자가 아닌 확인자가 plan을 확정(일괄 승인)해야 합니다.", "applying": "이미 apply가 진행 중입니다.",
+                   "paused": "일시정지 중입니다. 남은 절차를 고쳐 재계획을 요청하세요."}.get(state, "지금은 apply를 시작할 수 없습니다(검토 요청 → 확인자의 확정(승인) 뒤에 가능합니다).")
+            return None, why
+        if v is None:
+            return None, "아직 검토를 요청한 plan이 없습니다. 먼저 연습장에서 검토를 요청하세요."
+        plan = self.store.load_plan(sid, v)
+        steps = {s.id: s for s in plan.all_steps()}
+        st = self.store.step_states(sid, v)
+        if k == "approve_plan" or (k == "approve_step" and state == "plan_review"):
+            if state != "plan_review":
+                return None, "확정(승인)할 plan이 없습니다(이미 확정했거나 아직 검토 요청 전입니다)."
+            if is_req:
+                return None, "요청자는 plan을 확정(승인)할 수 없습니다. 요청자가 아닌 확인자가 확정해야 apply로 갈 수 있습니다."
+            return {"type": "approve_plan", "version": v, "hash": self.store.plan_meta(sid, v)["plan_hash"], "label": f"plan v{v} 확정(일괄 승인)", "who": "approver"}, ""
+        if state != "applying":
+            return None, "절차 승인·실행은 apply가 진행 중일 때만 할 수 있습니다(검토 요청 → 확인자의 확정 → apply 시작 순서입니다)."
+        h = self.store.plan_meta(sid, v)["plan_hash"]
+        confirmable = lambda s: s.op == "read" and s.grounded and not s.requires and s.kind != "manual"      # noqa: E731
+        order = [steps[x.id] for x in plan.all_steps()]
+        if k == "approve_step":
+            cands = [s for s in order if st[s.id]["state"] == "pending" and not confirmable(s) and s.op in ("read", "mutate")]
+            if intent.step_hint:
+                cands = [s for s in cands if s.id == intent.step_hint]
+            if not cands:
+                return None, "승인할 절차가 없습니다(승인 대기 중인 절차가 없거나 이미 승인했습니다)."
+            if is_req:
+                return None, f"요청자는 변경 절차를 승인할 수 없습니다. 요청자가 아닌 확인자가 {cands[0].id}을(를) 승인해야 합니다."
+            s = cands[0]
+            return {"type": "approve_step", "version": v, "step": s.id, "hash": h, "label": f"{s.id} 승인 ({s.title})", "who": "approver"}, ""
+        # 실행: 승인된 절차(run_step·start_poll) 또는 확인 한 번으로 되는 읽기 절차(run_read)
+        cands = [s for s in order if (st[s.id]["state"] == "approved" and s.op in ("read", "mutate")) or (st[s.id]["state"] == "pending" and confirmable(s))]
+        if intent.step_hint:
+            cands = [s for s in cands if s.id == intent.step_hint]
+        if not cands:
+            waiting = [s.id for s in order if st[s.id]["state"] == "pending" and not confirmable(s) and s.op in ("read", "mutate")][:3]
+            return None, "지금 실행할 수 있는 절차가 없습니다." + (f" 승인을 기다리는 절차: {', '.join(waiting)} (요청자가 아닌 확인자의 승인이 필요합니다)." if waiting else "")
+        s = cands[0]
+        if st[s.id]["state"] == "approved":
+            msg = {"type": "start_poll"} if s.kind == "poll" else {"type": "run_step"}
+            return {**msg, "version": v, "step": s.id, "label": f"{s.id} {'폴링 시작' if s.kind == 'poll' else '실행'} ({s.title})", "who": "anyone"}, ""
+        return {"type": "run_read", "version": v, "step": s.id, "hash": h, "label": f"{s.id} 확인(실행) ({s.title})", "who": "anyone"}, ""
+
+    def _open_proposal(self, sid: str, pid: str) -> dict:
+        p = json.loads(self.store.get_meta(sid, "proposal") or "null")
+        if not p or p.get("id") != pid or p.get("status") != "open":
+            raise ServiceError("proposal_not_open")
+        return p
+
+    def _accept_proposal(self, sid: str, nick: str, pid: str) -> dict:
+        """수정안을 사람이 수락하면 연산을 차례로 적용한다. 하나라도 거부되면 이미 적용한 것을 되돌리고(전부 아니면 전무) 이유를 알린다."""
+        if self.store.role_of(sid, nick) is None:
+            raise ApprovalError("not_a_participant")
+        p = self._open_proposal(sid, pid)
+        if p.get("action"):                                                       # 진행 요청 카드: 누른 사람의 신원으로 정식 메시지를 처리한다(서버 검사 그대로, 거부되면 카드는 남는다)
+            act = {k: x for k, x in p["action"].items() if k not in ("label", "who")}
+            self._dispatch(sid, nick, act)
+            p["status"] = "accepted"
+            self.store.set_meta(sid, "proposal", json.dumps(p, ensure_ascii=False))
+            self._thread_add(sid, "assistant", f"{nick}님이 실행했습니다: {p['action']['label']}")
+            return {"applied": 1}
+        applied = 0
+        try:
+            for op in p["ops"]:
+                self.scratch.op(sid, nick, {"type": "scratch", **op})
+                applied += 1
+        except ScratchError as e:
+            for _ in range(applied):
+                try:
+                    self.scratch.op(sid, nick, {"type": "scratch", "op": "undo"})
+                except ScratchError:
+                    break
+            p["status"] = "failed"
+            self.store.set_meta(sid, "proposal", json.dumps(p, ensure_ascii=False))
+            self._thread_add(sid, "assistant", "수정안을 적용하지 못했습니다(" + str(e.code if hasattr(e, "code") else e)[:80] + "). 연습장은 바뀌지 않았습니다.")
+            self._notify(sid)
+            return {"applied": 0}
+        p["status"] = "accepted"
+        self.store.set_meta(sid, "proposal", json.dumps(p, ensure_ascii=False))
+        self._thread_add(sid, "assistant", f"수정안 {applied}개를 적용했습니다. 검토 요청 포함이 풀린 절차는 다시 포함하세요(↶로 되돌릴 수 있습니다).")
+        self._persist(sid)
+        return {"applied": applied}
+
+    def _dismiss_proposal(self, sid: str, nick: str, pid: str) -> None:
+        if self.store.role_of(sid, nick) is None:
+            raise ApprovalError("not_a_participant")
+        p = self._open_proposal(sid, pid)
+        p["status"] = "dismissed"
+        self.store.set_meta(sid, "proposal", json.dumps(p, ensure_ascii=False))
+        self._thread_add(sid, "assistant", "수정안을 무시했습니다. 연습장은 바뀌지 않았습니다.")
+
+    def _drafts_mode(self, sid: str) -> bool:
+        """에이전트의 결과를 plan이 아니라 확정하지 않은 초안으로만 연습장에 덧붙이는가: 빈 plan 세션이거나, 연습장에 이미 작업한 절차가 있을 때."""
+        return bool(self.store.get_meta(sid, "manual_session")) or bool(self.scratch.get(sid).steps())
 
     def _set_pipeline(self, sid: str, status: str, message: str = "", *, reasons: list | None = None) -> None:
         self.store.set_meta(sid, "pipeline", json.dumps({"status": status, "message": message, "questions": [], "reasons": reasons or [], "interpretations": []},
@@ -227,11 +468,18 @@ class SessionService:
         if nick.lower() != sess["requester"].lower():
             raise ApprovalError("answer_by_requester_only")
         meta = json.loads(self.store.get_meta(sid, "pipeline") or "null") or {}
-        if sess["state"] != "draft" or meta.get("status") in (None, "plan", "generating"):
+        if sess["state"] not in ("draft", "plan_review", "plan_approved", "paused") or meta.get("status") in (None, "plan", "generating") or                 (sess["state"] != "draft" and meta.get("status") != "manual"):
             raise ServiceError("answer_not_expected")
         v = check_user_input(text, self.masker_for(sid))
         if not v.allow or v.masked_text is None:
             raise ServiceError("input_rejected", user_message(v.reasons))
+        if meta.get("status") == "manual":                                                  # 초안 모드: 새 요청이면 그 문장만, 직전이 되묻기였으면 이어서 보낸다
+            last = (self._thread(sid) or [{}])[-1]
+            text_out = self._combined(sid, v.masked_text) if last.get("kind") == "clarify" else v.masked_text
+            self._thread_add(sid, "user", v.masked_text)
+            self._set_pipeline(sid, "generating")
+            self.start_generation(sid, text_out)
+            return
         combined = self._combined(sid, v.masked_text)
         self._thread_add(sid, "user", v.masked_text)
         self._set_pipeline(sid, "generating")
@@ -295,6 +543,9 @@ class SessionService:
                 data = self._dispatch(sid, nick, msg)
                 if self.store.session(sid)["state"] == "applying":
                     self._resume_polls(sid)                      # 확인 step이 poll이라 자동으로 시작된 조회에도 반복 스레드를 붙인다
+                    pv = self.store.latest_version(sid)
+                    if pv is not None:
+                        self.ap.apply_preapprovals(sid, pv)      # plan 확정 때 사전 승인된 절차가 순서 조건을 채우면 승인 상태로 올린다(D-50)
                 self._persist(sid)
             out = {"ok": True, **(data or {})}
         except ApprovalError as e:
@@ -303,6 +554,8 @@ class SessionService:
             out = {"ok": False, "code": e.code}
         except PlanInvalid as e:
             out = {"ok": False, "code": "plan_invalid", "codes": e.codes[:8]}
+        except ScratchError as e:
+            out = {"ok": False, "code": e.code, **({"codes": e.codes[:6]} if e.codes else {})}
         except ServiceError as e:
             out = {"ok": False, "code": e.code, **({"message": e.message} if e.message else {})}
         self._notify(sid)
@@ -349,8 +602,28 @@ class SessionService:
             self.replan.pause(sid, nick)
         elif t == "abort":
             self.apply.abort(sid, nick, v())
-        elif t == "edit":
-            self._edit(sid, nick, m)
+        elif t == "scratch":
+            self._member(sid, nick)
+            return self.scratch.op(sid, nick, m)
+        elif t == "reject_plan":
+            self._reject(sid, nick, m)
+        elif t == "propose_edit":
+            self._propose_edit(sid, nick, _need(m, "text", str))
+        elif t == "accept_proposal":
+            return self._accept_proposal(sid, nick, _need(m, "proposal", str))
+        elif t == "dismiss_proposal":
+            self._dismiss_proposal(sid, nick, _need(m, "proposal", str))
+        elif t == "send_to_apply":
+            self._send(sid, nick)
+        elif t == "catalog_search":
+            self._member(sid, nick)
+            return {"items": self.scratch.catalog_search(sid, _need(m, "query", str))}
+        elif t == "suggest":
+            self._member(sid, nick)
+            return {"names": self.scratch.suggest(sid, _need(m, "option", str))}
+        elif t == "lookup":
+            self._member(sid, nick)
+            return {"items": self.scratch.lookup(sid, _need(m, "kind", str), _need(m, "vpc", str, optional=True, default=""))}
         elif t == "answer":
             self._answer(sid, nick, _need(m, "text", str))
         elif t == "retry_generation":
@@ -364,32 +637,27 @@ class SessionService:
         else:
             raise ServiceError("unknown_message")
 
-    def _edit(self, sid: str, nick: str, m: dict) -> None:
-        op = _need(m, "op", str)
+    def _member(self, sid: str, nick: str) -> None:
         if self.store.role_of(sid, nick) is None:
             raise ApprovalError("not_a_participant")
-        v = self.store.latest_version(sid)
-        if v is None:
-            raise ServiceError("no_plan")
-        plan = self.store.load_plan(sid, v)
-        if op == "add_step":
-            new = self.editor.add_step(sid, plan, _need(m, "phase", str), _need(m, "step", dict), after=_need(m, "after", str, optional=True))
-        elif op == "add_steps":
-            new = self.editor.add_steps(sid, plan, _need(m, "phase", str), _need(m, "steps", list), after=_need(m, "after", str, optional=True))
-        elif op == "update_step":
-            new = self.editor.update_step(sid, plan, _need(m, "step_id", str), **_need(m, "fields", dict))
-        elif op == "delete_step":
-            new = self.editor.delete_step(sid, plan, _need(m, "step_id", str))
-        elif op == "move_step":
-            new = self.editor.move_step(sid, plan, _need(m, "step_id", str), after=_need(m, "after", str, optional=True))
-        elif op == "set_gate":
-            new = self.editor.set_gate(sid, plan, _need(m, "phase", str), _need(m, "gate", bool))
+
+    def _send(self, sid: str, nick: str) -> None:
+        """연습장에서 확정한 절차만으로 plan을 만들어 Apply용으로 보낸다(요청자가 아닌 사람의 승인을 기다리는 새 plan 버전).
+        `build_plan`의 전체 검증을 다시 거친다. 일시정지 중이면 부분 재계획(완료 절차 잠금)으로 보낸다."""
+        self._member(sid, nick)
+        sess = self.store.session(sid)
+        if sess["state"] not in ("draft", "plan_review", "plan_approved", "paused"):
+            raise ServiceError("send_not_allowed")
+        plan = self.scratch.promote(sid, bool(sess["iac_managed"]))
+        parent = self.store.latest_version(sid)
+        if sess["state"] == "paused":
+            version = self.replan.submit_replan(sid, nick, plan)
         else:
-            raise ServiceError("unknown_edit_op")
-        if self.store.session(sid)["state"] == "paused":
-            self.replan.submit_replan(sid, nick, new)                 # apply 중 수정은 일시정지 후 부분 재계획으로만
-        else:
-            self.ap.submit_plan(sid, nick, new, parent_version=v)
+            version = self.ap.submit_plan(sid, nick, plan, parent_version=parent)
+        self.scratch.sync_from_plan(sid, plan)
+        self.store.set_meta(sid, "rejection", "null")                          # 새로 검토를 요청하면 지난 반려 코멘트는 거둔다(대화 기록에는 남는다)
+        n = len(plan.all_steps())
+        self._thread_add(sid, "assistant", f"검토를 요청했습니다(절차 {n}개, plan v{version}). 요청자가 아닌 확인자가 확정(일괄 승인)하면 apply를 진행할 수 있습니다.")
 
     def _run_read(self, sid: str, nick: str, version: int, step_id: str, plan_hash: str) -> None:
         """변경이 아닌 읽기 절차(사전 점검 포함)는 별도 승인 없이 "확인" 한 번으로 승인과 실행을 이어서 한다.
@@ -463,6 +731,27 @@ class SessionService:
         return self._maps.purge_expired()
 
     # ---------------- 작업 이력(DB) ----------------
+    def timeline(self, sid: str) -> dict:
+        """작업의 주요 시각(초): 생성, plan 전송(검토 시작), plan 승인, apply 시작, 종료(완료·중단), 마지막 수정. 상태 전이 이벤트에서 읽는다(없으면 None)."""
+        s = self.store.session(sid)
+        t = {"created": s["created_at"], "updated": s["updated_at"], "plan": None, "approved": None, "apply": None, "ended": None, "rejected": None}
+        for e in self.store.events(sid):
+            if e["kind"] != "session_state" or "->" not in e["detail"]:
+                continue
+            new = e["detail"].split("->", 1)[1]
+            if new == "plan_review" and t["plan"] is None:
+                t["plan"] = e["ts"]
+            elif new == "plan_approved":
+                t["approved"] = e["ts"]
+            elif new == "applying" and t["apply"] is None:
+                t["apply"] = e["ts"]
+            elif new in ("completed", "aborted"):
+                t["ended"] = e["ts"]
+            elif new == "draft" and e["detail"].split("->", 1)[0] in ("plan_review", "plan_approved"):
+                t["rejected"] = e["ts"]                                                  # 반려(마지막)
+        t["updated"] = max(x for x in t.values() if x)                  # 마지막 수정은 어떤 시각보다 앞설 수 없다
+        return t
+
     def history(self, creds: list[dict]) -> list[dict]:
         """브라우저가 가진 멤버 토큰으로 그 사람이 참여한 작업의 제목·상태·결과 요약을 DB에서 읽어 돌려준다.
         토큰이 맞지 않는 항목은 `valid: false`로 돌려주고 내용은 주지 않는다. 계정이 없는 Phase 1에서 토큰이 곧 자격이다."""
@@ -490,7 +779,7 @@ class SessionService:
                 title = s["title"]
             out.append({"sid": sid, "valid": True, "nick": nick, "title": title or "(제목 없음)", "state": s["state"], "requester": s["requester"],
                         "created_at": s["created_at"], "updated_at": s["updated_at"], "steps": counts, "risk": risk, "version": v,
-                        "participants": len(self.store.participants(sid))})
+                        "participants": len(self.store.participants(sid)), "times": self.timeline(sid)})
         out.sort(key=lambda r: r.get("updated_at", 0), reverse=True)
         return out
 
@@ -516,10 +805,11 @@ class SessionService:
             for it in review["facts"]["checklist"]:
                 it["message"] = _CHECK_MESSAGES.get(it["code"], it["code"])
         out: dict = {"session": {"id": sid, "state": s["state"], "requester": s["requester"], "iac_managed": bool(s["iac_managed"]),
-                                 "request": show(s["masked_request"]), "title": show(s["title"]), "created_at": s["created_at"]},
+                                 "request": show(s["masked_request"]), "title": show(s["title"]), "created_at": s["created_at"], "times": self.timeline(sid)},
                      "you": {"nick": nick, "role": self.store.role_of(sid, nick)},
                      "participants": self.store.participants(sid), "pipeline": show(meta("pipeline")), "version": v, "thread": show(meta("thread") or []),
-                     "analyzing": meta("analyzing")}
+                     "analyzing": meta("analyzing"), "proposing": bool(meta("proposing")), "rejection": show(meta("rejection")),
+                     "proposal": (lambda p: show(p) if p and p.get("status") == "open" else None)(meta("proposal"))}
         if v is not None:
             plan: Plan = self.store.load_plan(sid, v)
             st = self.store.step_states(sid, v)
@@ -535,9 +825,21 @@ class SessionService:
             out.update({
                 "plan": show(plan.model_dump(mode="json")), "plan_hash": pm["plan_hash"], "plan_status": pm["status"],
                 "steps": st, "pending_requirements": pending,
+                "preapprovable": [s.id for s in plan.all_steps() if s.preapprovable], "preapproved": self.ap.preapproved_ids(sid, v),
+                "preapprove_blockers": {s.id: list(s.preapprove_blockers) for s in plan.all_steps() if s.op == "mutate" and not s.preapprovable},
                 "approvals": [{k: a[k] for k in ("kind", "target", "nick", "ts")} | {"detail": show(a["detail"])} for a in self.store.approvals(sid, v)],
                 "outputs": show([o for o in self.store.outputs(sid, v)][-80:]),
                 "review": show(review), "evidence": show(meta("evidence")),
             })
+        sc = self.scratch.get(sid)
+        status = self.scratch.validate(sid, sc)
+        locks = self.scratch.locks(sid, sc)
+        undo, redo = self.scratch.can_undo_redo(sid)
+        out["scratch"] = show({
+            "phases": [{**{k: val for k, val in ph.model_dump().items() if k != "steps"},
+                        "gate_locked": any(status[x.id]["irreversible"] and x.confirmed for x in ph.steps) or any(status[x.id]["irreversible"] for x in ph.steps),
+                        "steps": [{**x.model_dump(), **status[x.id], "locked": locks.get(x.id, "")} for x in ph.steps]} for ph in sc.phases],
+            "undo": undo, "redo": redo, "dirty": self.scratch.dirty(sid),
+            "confirmed": sum(1 for x in sc.steps() if x.confirmed), "total": len(sc.steps())})
         out["events"] = show(self.store.events(sid)[-60:])
         return out

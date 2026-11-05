@@ -219,7 +219,7 @@ class SessionStore:
         return plan
 
     def set_plan_status(self, session_id: str, version: int, status: str, *, nick: str | None = None) -> None:
-        if status not in ("draft", "approved", "superseded"):
+        if status not in ("draft", "approved", "superseded", "rejected"):
             raise StoreError("invalid_plan_status")
         with self._tx() as db:
             db.execute("UPDATE plan_versions SET status=? WHERE session_id=? AND version=?", (status, session_id, version))

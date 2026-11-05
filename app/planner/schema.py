@@ -22,8 +22,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.guards.agent_limits import MAX_PHASE_STEPS, PlanTooLarge, check_plan_size
+from app.guards.refs import find_refs, output_not_json
 from app.guards.boundary import leak_kinds
-from app.guards.command_guard import CommandGuard
+from app.guards.command_guard import HIGH_FLAGS, CommandGuard
 from app.guards.masking import Masker
 
 STEP_ID = r"^[a-z][a-z0-9-]{0,39}$"
@@ -110,6 +111,34 @@ class Step(BaseModel):
         return self.op == "mutate" or self.fallback
 
     @property
+    def preapprove_blockers(self) -> tuple[str, ...]:
+        """plan 확정(일괄 승인) 때 절차별 승인을 함께 받을 수 없는 이유(D-50). 비어 있으면 **저위험 변경 절차**라서 함께 사전 승인된다.
+        서버가 실행하는 변경 중 문서 근거가 있고, 위험이 high가 아니며, 중단·교체·되돌릴 수 없음이 없고, 추가 조치·강한 경고 표시가 없는 것이다.
+        IaC 코드와 어긋날 수 있다(`iac_drift`) 같은 안내는 위험 요인이 아니다."""
+        if self.op != "mutate" or self.kind not in ("cli",) or not self.command:
+            return ("not_server_change",)
+        out: list[str] = []
+        if not self.grounded:
+            out.append("not_grounded")
+        if self.risk not in ("low", "medium"):
+            out.append("high_risk")
+        if self.irreversible:
+            out.append("irreversible")
+        disruption = self.impact.get("disruption")
+        if disruption != "none":
+            out.append("disruption_unknown" if disruption is None else f"disruption_{disruption}")
+        if self.impact.get("replaces"):
+            out.append("replaces")
+        if self.requires:
+            out.append("needs_confirmation")
+        out += [f"flag:{f}" for f in self.flags if f in HIGH_FLAGS or f == "scale_to_zero"]
+        return tuple(dict.fromkeys(out))
+
+    @property
+    def preapprovable(self) -> bool:
+        return not self.preapprove_blockers
+
+    @property
     def irreversible(self) -> bool:
         """문서의 impact 또는 모델의 표시. 어느 쪽이든 true면 그 phase의 게이트가 잠긴다(모델이 false로 해도 문서 값은 바뀌지 않는다)."""
         return self.impact.get("reversible") == "irreversible" or self.declared_irreversible
@@ -140,7 +169,8 @@ class Plan(BaseModel):
 
 
 # ---------------- 구성과 검증 ----------------
-def build_plan(draft: PlanDraft, guard: CommandGuard, masker: Masker, *, iac_managed: bool = False, postprocess: bool = True) -> Plan:
+def build_plan(draft: PlanDraft, guard: CommandGuard, masker: Masker, *, iac_managed: bool = False, postprocess: bool = True,
+               suppressed: frozenset[str] = frozenset(), frozen: frozenset[str] = frozenset()) -> Plan:
     codes: list[str] = []
     text = " ".join([draft.summary] + [
         " ".join([p.title, p.purpose, p.rollback, p.gate_reason, *p.preconditions] + [
@@ -167,6 +197,7 @@ def build_plan(draft: PlanDraft, guard: CommandGuard, masker: Masker, *, iac_man
                     codes.append(f"unknown_or_forward_reference:{sd.id}->{dep}")
             if sd.check_for and sd.check_for in seen and not _is_change(seen[sd.check_for]):
                 codes.append(f"check_target_not_change:{sd.id}")
+            step = _check_refs(sd, step, seen, codes)
             seen[sd.id] = step
             steps.append(step)
         _require_checks(steps, codes)
@@ -182,7 +213,29 @@ def build_plan(draft: PlanDraft, guard: CommandGuard, masker: Masker, *, iac_man
     if not postprocess:
         return plan
     from app.planner.postprocess import apply_postprocess      # 순환 import를 피한다
-    return apply_postprocess(plan, guard, masker)
+    return apply_postprocess(plan, guard, masker, suppressed, frozen)
+
+
+def _check_refs(sd: StepDraft, step: Step, seen: dict[str, Step], codes: list[str]) -> Step:
+    """앞 절차 결과 참조(D-48): 서버가 실행하는 앞 절차만 가리킬 수 있고, 참조한 절차는 의존으로 자동 추가한다. 사람이 실행하는 절차에는 쓸 수 없다."""
+    refs = find_refs(sd.command)
+    if not refs:
+        return step
+    if sd.kind not in ("cli", "poll"):
+        codes.append(f"ref_not_allowed_here:{sd.id}")
+        return step
+    need: list[str] = []
+    for rid, _ in refs:
+        tgt = seen.get(rid)
+        if tgt is None:
+            codes.append(f"ref_unknown_or_forward:{sd.id}->{rid}")
+        elif tgt.kind not in ("cli", "poll") or tgt.op not in ("read", "mutate") or not tgt.command:
+            codes.append(f"ref_target_not_runnable:{sd.id}->{rid}")
+        elif output_not_json(tgt.command):
+            codes.append(f"ref_target_not_json:{sd.id}->{rid}")
+        elif rid not in step.depends_on and rid not in need:
+            need.append(rid)
+    return step.model_copy(update={"depends_on": (*step.depends_on, *need)}) if need else step
 
 
 def _is_change(step: Step) -> bool:

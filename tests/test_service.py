@@ -23,8 +23,9 @@ class FakePipeline:
         self._plan, self._status = plan, status
         self.seen = []
 
-    def run(self, text, *, iac_managed=False, session_id=None):
+    def run(self, text, *, iac_managed=False, session_id=None, drafts=False):
         self.seen.append(text)
+        self.drafts = drafts
         if self._status != "plan":
             return PipelineResult(self._status, message="되묻기", questions=({"param": "대상", "question": "어느 것?"},))
         return PipelineResult("plan", plan_result=PlanResult("plan", plan=self._plan),
@@ -43,7 +44,7 @@ class Env:
     pass
 
 
-def build(tmp_path, chunks, snapshot, *, extra=(), pipeline_status="plan", statuses=None, sleep=lambda s: time.sleep(0.01), analyzer_factory=None):
+def build(tmp_path, chunks, snapshot, *, extra=(), pipeline_status="plan", statuses=None, sleep=lambda s: time.sleep(0.01), analyzer_factory=None, catalog_retriever=None):
     guard = CommandGuard(CommandIndex(chunks), snapshot, workspace=tmp_path)
     store = SessionStore(tmp_path / "s.sqlite")
     maps = SqliteMappingStore(tmp_path / "m.sqlite")
@@ -58,7 +59,7 @@ def build(tmp_path, chunks, snapshot, *, extra=(), pipeline_status="plan", statu
         return box.pipeline
 
     box.svc = SessionService(store, maps, executor=ex, guard=guard, pipeline_factory=factory,
-                             inventory_factory=lambda: Inventory.from_file(FIXTURE), sleep=sleep, analyzer_factory=analyzer_factory)
+                             inventory_factory=lambda: Inventory.from_file(FIXTURE), sleep=sleep, analyzer_factory=analyzer_factory, catalog_retriever=catalog_retriever)
     return box
 
 
@@ -131,7 +132,8 @@ def test_malformed_messages_are_refused_with_codes(b):
     assert b.svc.handle(sid, "bob", {"type": "approve_plan", "version": True, "hash": "x"})["code"] == "bad_field:version"
     assert b.svc.handle(sid, "bob", {"type": "approve_plan", "version": 1})["code"] == "missing_field:hash"
     assert b.svc.handle(sid, "mallory", {"type": "approve_plan", "version": 1, "hash": "x"})["code"] == "not_a_participant"
-    assert b.svc.handle(sid, "bob", {"type": "edit", "op": "drop_table"})["code"] == "unknown_edit_op"
+    assert b.svc.handle(sid, "bob", {"type": "scratch", "op": "drop_table"})["code"] == "unknown_scratch_op"
+    assert b.svc.handle(sid, "bob", {"type": "edit", "op": "add_step"})["code"] == "unknown_message"                 # 예전 edit 메시지는 연습장(scratch)으로 대체되었다
 
 
 def test_view_shows_pending_requirements_and_review_for_participants(b):
@@ -141,26 +143,6 @@ def test_view_shows_pending_requirements_and_review_for_participants(b):
 
 
 # ---------------- 수정 ----------------
-def test_edit_creates_a_new_version_in_review_but_is_blocked_while_applying(b):
-    sid, c, _ = started(b)
-    r = b.svc.handle(sid, "bob", {"type": "edit", "op": "add_step", "phase": "p1",
-                                  "step": {"id": "mine", "kind": "cli", "title": "조회", "command": "aws ec2 describe-vpcs"}})
-    assert r["ok"] and b.store.latest_version(sid) == 2
-    v = b.svc.view(sid, "alice")
-    b.svc.handle(sid, "bob", {"type": "approve_plan", "version": 2, "hash": v["plan_hash"]})
-    b.svc.handle(sid, "alice", {"type": "start_apply"})
-    r = b.svc.handle(sid, "alice", {"type": "edit", "op": "delete_step", "step_id": "mine"})
-    assert r == {"ok": False, "code": "plan_edit_not_allowed:applying"}
-    assert b.svc.handle(sid, "alice", {"type": "pause"})["ok"]
-    assert b.svc.handle(sid, "alice", {"type": "edit", "op": "delete_step", "step_id": "mine"})["ok"]      # 일시정지 후에는 부분 재계획
-    assert b.store.session(sid)["state"] == "plan_review" and b.store.latest_version(sid) == 3
-
-
-def test_invalid_edit_returns_plan_codes_not_values(b):
-    sid, c, _ = started(b)
-    r = b.svc.handle(sid, "bob", {"type": "edit", "op": "add_step", "phase": "p1",
-                                  "step": {"id": "x", "kind": "cli", "title": "t", "command": "aws ec2 describe-vpcs --profile prod"}})
-    assert r["ok"] is False and r["code"] == "plan_invalid" and any(c.startswith("blocked_command") for c in r["codes"])
 
 
 # ---------------- 재시작·매핑 ----------------
@@ -343,37 +325,6 @@ def test_the_requester_can_create_a_fresh_invite_and_the_old_link_stops_working(
     assert r["invite"].encode() not in b.store._db.execute("SELECT group_concat(invite_hash) FROM sessions").fetchone()[0].encode()      # 해시만 저장
 
 
-def test_a_change_and_its_check_can_be_added_together(b):
-    sid, c, _ = started(b)
-    ph = "<INSTANCE_1>"
-    r = b.svc.handle(sid, "bob", {"type": "edit", "op": "add_steps", "phase": "p1", "steps": [
-        {"id": "stop", "kind": "cli", "title": "중지", "command": f"aws ec2 stop-instances --instance-ids {ph}"},
-        {"id": "stop-chk", "kind": "cli", "title": "확인", "check_for": "stop", "command": f"aws ec2 describe-instance-status --instance-ids {ph}"}]})
-    assert r["ok"] and b.store.latest_version(sid) == 2
-    r = b.svc.handle(sid, "bob", {"type": "edit", "op": "add_steps", "phase": "p1", "steps": [
-        {"id": "start", "kind": "cli", "title": "시작", "command": f"aws ec2 start-instances --instance-ids {ph}"}]})
-    assert r["ok"] is False and "missing_check:start" in r["codes"]                         # 짝이 없으면 서버가 거부
-
-
-def test_a_step_can_be_moved_to_the_front_and_null_optional_fields_are_ignored(tmp_path, chunks, snapshot):
-    """브라우저 확인에서 발견: 화면이 맨 앞으로 옮길 때 보내는 after: null을 서버가 거부했다."""
-    box = build(tmp_path, chunks, snapshot, extra=({"id": "peek", "kind": "cli", "title": "조회", "command": "aws ec2 describe-vpcs"},))
-    c = box.svc.create("alice", "정렬", REQUEST)
-    sid = c["session_id"]
-    box.svc.generate_plan(sid, REQUEST)
-
-    def rows():
-        return [s["id"] for ph in box.svc.view(sid, "alice")["plan"]["phases"] for s in ph["steps"]]
-    assert rows() == ["reboot", "verify", "peek"]
-    assert box.svc.handle(sid, "alice", {"type": "edit", "op": "move_step", "step_id": "peek", "after": None})["ok"]
-    r1 = rows()                                                                                # 편집하면 서버가 사전 점검(pre-reboot)을 넣을 수 있다
-    assert r1.index("peek") < r1.index("reboot") < r1.index("verify") and r1[0] in ("peek", "pre-reboot")
-    assert box.svc.handle(sid, "alice", {"type": "edit", "op": "move_step", "step_id": "peek", "after": "reboot"})["ok"]
-    r2 = rows()
-    assert r2.index("reboot") < r2.index("peek")
-    r = box.svc.handle(sid, "alice", {"type": "edit", "op": "move_step", "step_id": "peek", "after": 5})
-    assert r == {"ok": False, "code": "bad_field:after"}                                      # null이 아닌 잘못된 형식은 여전히 거부
-    box.store.close(); box.maps.close()
 
 
 # ---------------- 중단 안내와 다시 시도 ----------------
@@ -513,3 +464,35 @@ def test_old_questions_are_dropped_first_when_the_text_gets_long_and_stops_and_r
     # 아주 긴 답이 겹치면 오래된 질문을 먼저 뺀다(질문이 없어도 답과 요청은 남는다)
     assert len(box.svc._combined(sid)) <= 1900
     box.store.close(); box.maps.close()
+
+
+def test_the_timeline_records_created_plan_approved_apply_and_ended_times(tmp_path, chunks, snapshot):
+    clock = {"t": 1000.0}
+    box = build(tmp_path, chunks, snapshot)
+    c = box.svc.create("alice", "시각 확인", REQUEST)
+    sid = c["session_id"]
+    t0 = box.svc.timeline(sid)
+    assert t0["created"] and t0["plan"] is None and t0["apply"] is None and t0["ended"] is None
+    box.svc.generate_plan(sid, REQUEST)
+    box.svc.join(sid, c["invite"], "bob")
+    v = box.svc.view(sid, "alice")
+    box.svc.handle(sid, "bob", {"type": "approve_plan", "version": v["version"], "hash": v["plan_hash"]})
+    t1 = box.svc.timeline(sid)
+    assert t1["plan"] and t1["approved"] and t1["apply"] is None and t1["plan"] >= t1["created"]
+    box.svc.handle(sid, "alice", {"type": "start_apply"})
+    t2 = box.svc.timeline(sid)
+    assert t2["apply"] and t2["apply"] >= t2["approved"] and t2["ended"] is None
+    box.svc.handle(sid, "alice", {"type": "abort", "version": v["version"]})
+    t3 = box.svc.timeline(sid)
+    assert t3["ended"] and t3["ended"] >= t3["apply"] and t3["updated"] >= t3["ended"]
+    assert box.svc.view(sid, "alice")["session"]["times"] == t3
+    h = box.svc.history([{"sid": sid, "token": c["member_token"]}])[0]
+    assert h["times"] == t3
+    box.store.close(); box.maps.close()
+
+
+def test_a_model_outage_stop_message_names_the_cause_kind_only():
+    from app.planner.pipeline import stop_message
+    m = stop_message("llm_unavailable", ("MAIN 호출 실패: ReadTimeoutError -",))
+    assert "모델을 지금 사용할 수 없습니다" in m and "(원인: MAIN 호출 실패: ReadTimeoutError -)" in m
+    assert "(원인" not in stop_message("llm_unavailable")

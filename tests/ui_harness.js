@@ -40,10 +40,10 @@ const fakeEvent = () => ({ preventDefault() {}, dataTransfer: { setData() {}, ef
 
 const result = {};
 for (const c of cases) {
-  vm.runInContext(`S.sid = "s1"; S.nick = ${JSON.stringify(c.view.you.nick)}; S.view = ${JSON.stringify(c.view)}; S.history = ${JSON.stringify(c.history || [])}; S.conn = "연결됨"; S.sel = ${JSON.stringify(c.sel || null)}; S.invite = ${JSON.stringify(c.invite || null)}; S.newTask = false; S.ctab = ${JSON.stringify(c.ctab || "plan")}; S.addAt = ${JSON.stringify(c.addAt || null)}; S.autoOff = true; render();`, ctx);
+  vm.runInContext(`S.sid = "s1"; S.nick = ${JSON.stringify(c.view.you.nick)}; S.view = ${JSON.stringify(c.view)}; S.history = ${JSON.stringify(c.history || [])}; S.conn = "연결됨"; S.sel = ${JSON.stringify(c.sel || null)}; S.invite = ${JSON.stringify(c.invite || null)}; S.newTask = false; S.ctab = ${JSON.stringify(c.ctab || "plan")}; S.addAt = ${JSON.stringify(c.addAt || null)}; S.autoOff = true; S.bld = ${JSON.stringify(c.bld || null)}; S.echo = ${JSON.stringify(c.echo || null)}; render();`, ctx);
   const cta = textareas(els.composer)[0];
   const r = result[c.name] = {
-    left: text(els.left), center: text(els.center), chat: text(els.chat), leftButtons: plain(buttons(els.left)), buttons: plain(buttons(els.center)),
+    left: text(els.left), center: text(els.center), chat: text(els.chat), leftButtons: plain(buttons(els.left)), chatButtons: plain(buttons(els.chat)), buttons: plain(buttons(els.center)),
     composer: { buttons: plain(buttons(els.composer)), disabled: cta ? "disabled" in cta.attrs : null, placeholder: cta ? cta.attrs.placeholder : null },
     rows: [], draggable: [], actors: {}, rowIcons: {}, dots: [], terminal: "", tabs: buttons(els.center).filter(b => b.cls.includes("ctab")).map(b => ({ text: b.text, on: b.cls.includes(" on") })),
   };
@@ -85,4 +85,6 @@ vm.runInContext(`S.sid = null; S.view = null; S.history = []; S.newTask = true; 
 result.newtask = { left: text(els.left), center: text(els.center), chat: text(els.chat), composer: { buttons: plain(buttons(els.composer)), placeholder: (textareas(els.composer)[0] || { attrs: {} }).attrs.placeholder } };
 vm.runInContext(`S.newTask = false; render();`, ctx);
 result.welcome = { center: text(els.center), composer: textareas(els.composer).length };
+const ev = JSON.parse(process.env.UI_EVAL || "null");
+if (ev) result.eval = vm.runInContext(ev, ctx);
 console.log(JSON.stringify(result));

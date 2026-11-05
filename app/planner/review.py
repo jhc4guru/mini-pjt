@@ -114,6 +114,9 @@ class ReviewResult:
     llm_roles: tuple[str, ...] = ()
 
 
+INFO_WARNINGS = frozenset({"iac_drift", "consider_iac_step"})
+
+
 # ---------------- 서버 규칙: 체크리스트와 위험 등급 ----------------
 def _phase_items(p: Phase) -> list[CheckItem]:
     items: list[CheckItem] = []
@@ -155,13 +158,14 @@ def build_review(plan: Plan) -> ReviewFacts:
     if len(eks) >= 4 and len(eks) * 5 > len(steps):            # 사용자 방침(D-45): 상태 확인은 kubectl 우선. 위험이 아니라 검토 안내라 info다(위험 등급에 영향 없음)
         items.append(CheckItem("aws_eks_heavy", "info", None, tuple(eks[:6]), f"{len(eks)}/{len(steps)}"))
     codes = {i.code for i in items if i.status == "warn"}
+    warnings = tuple(w for w in plan.warnings if w.split(":", 1)[0] not in INFO_WARNINGS)       # IaC 동기화 안내(D-47)는 위험이 아니라 알림이다: 등급·주의 건수에 넣지 않고 iac_step(info)로 보인다
     if codes & {"irreversible", "risk_flag", "fallback_step"}:
         level = "high"
-    elif codes or plan.warnings:
+    elif codes or warnings:
         level = "medium"
     else:
         level = "low"
-    return ReviewFacts(level, tuple(items), tuple(plan.warnings))
+    return ReviewFacts(level, tuple(items), warnings)
 
 
 def step_evidence(step: Step, chunks: dict[str, Chunk]) -> dict:

@@ -25,7 +25,9 @@ _NODE_COMMANDS = frozenset({"cordon", "uncordon", "drain", "taint"})   # 위치 
 _KUBECTL_COPY_OPTS = {"--namespace": "--namespace", "-n": "--namespace"}
 
 
-def apply_postprocess(plan: Plan, guard: CommandGuard, masker: Masker) -> Plan:
+def apply_postprocess(plan: Plan, guard: CommandGuard, masker: Masker, suppressed: frozenset[str] = frozenset(), frozen: frozenset[str] = frozenset()) -> Plan:
+    """`suppressed`: 사용자가 지운 서버 추가 절차의 id. 같은 id로 만들어질 절차는 다시 끼워 넣지 않는다(D-47).
+    `frozen`: 이미 끝나 잠긴 절차의 id. 부분 재계획에서 잠긴 절차를 바꾸지 않도록 이 절차에는 사전 점검·코드 동기화 확인을 새로 붙이지 않는다."""
     warnings: list[str] = []
     phases = [list(p.steps) for p in plan.phases]
     ids = {s.id for p in phases for s in p}
@@ -38,7 +40,7 @@ def apply_postprocess(plan: Plan, guard: CommandGuard, masker: Masker) -> Plan:
         for si, s in enumerate(steps):
             if s.op == "read" and s.chunk_id:
                 seen_reads.add(s.chunk_id)
-            if s.op != "mutate":
+            if s.op != "mutate" or s.id in frozen:
                 continue
             if s.impact.get("dry_run"):
                 warnings.append(f"dry_run_available:{s.id}")
@@ -60,6 +62,8 @@ def apply_postprocess(plan: Plan, guard: CommandGuard, masker: Masker) -> Plan:
                     continue
                 commands.add(cmd)
                 sid = _unique(f"pre-{s.id}", ids)
+                if sid in suppressed:
+                    continue
                 ids.add(sid)
                 new_deps.append(sid)
                 inserted.setdefault(pi, []).append(Step(
@@ -75,13 +79,15 @@ def apply_postprocess(plan: Plan, guard: CommandGuard, masker: Masker) -> Plan:
     # ---- IaC 동기화 ----
     if plan.iac_managed:
         for steps in phases:
-            for s in [x for x in steps if x.op == "mutate" and x.impact.get("iac")]:
+            for s in [x for x in steps if x.op == "mutate" and x.impact.get("iac") and x.id not in frozen]:
                 warnings += [f"iac_drift:{s.id}", f"consider_iac_step:{s.id}"]
                 if any(t.kind == "iac" and s.id in t.depends_on for p in phases for t in p):
                     continue
                 idx = next(i for i, t in enumerate(steps) if t.id == s.id)
                 last = max((i for i, t in enumerate(steps) if t.check_for == s.id), default=idx)
                 sid = _unique(f"iac-{s.id}", ids)
+                if sid in suppressed:
+                    continue
                 ids.add(sid)
                 steps.insert(last + 1, Step(
                     id=sid, kind="iac", title=f"코드 동기화 확인: {s.id}", depends_on=(s.id,), auto=True,

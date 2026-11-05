@@ -113,6 +113,8 @@ class ReadToolbox:
             return self._err("run_read_command", "command_not_masked")
         if self._masker.unresolved(cmd):
             return self._err("run_read_command", "unknown_placeholder")
+        if "@{" in cmd:
+            return self._err("run_read_command", "references_not_allowed")      # 앞 절차 결과 참조는 apply에서 서버가 치환한다. 조사 도구에서는 쓸 수 없다(D-48)
         verdict = self._guard.check(cmd, self._masker)
         self._log("command", verdict.allow, verdict.blocks, subject=cmd)
         try:

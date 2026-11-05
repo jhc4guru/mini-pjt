@@ -32,7 +32,7 @@ class CreateBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     nick: str = Field(max_length=40)
     title: str = Field(min_length=1, max_length=80)
-    request: str = Field(max_length=4000)
+    request: str = Field(default="", max_length=4000)        # 비우면 빈 plan(연습장) 모드로 시작한다
     iac_managed: bool = False
 
 
@@ -120,7 +120,8 @@ def create_app(service: SessionService, *, static_dir: Path | None = None, purge
             out = await run_in_threadpool(service.create, body.nick, body.title, body.request, iac_managed=body.iac_managed)
         except ServiceError as e:
             raise HTTPException(400, {"code": e.code, "message": e.message}) from None
-        service.start_generation(out["session_id"], body.request)      # 계획 생성은 백그라운드. 진행은 WebSocket 스냅샷으로 알린다
+        if not out.get("empty"):
+            service.start_generation(out["session_id"], body.request)  # 계획 생성은 백그라운드. 진행은 WebSocket 스냅샷으로 알린다
         return {**out, "join_path": f"/?s={out['session_id']}&i={out['invite']}"}
 
     @app.post("/api/history")

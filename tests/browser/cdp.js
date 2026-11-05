@@ -37,40 +37,76 @@ const rowIds = () => `[...document.querySelectorAll("#center .srow")].map(r => r
     log.push("new-task-click:" + await ev(a, clickText("＋ 새 작업")));
     await sleep(300);
     await shot(a, "2_new_task");
-    // 제목 없이 보내면 막힌다
-    await ev(a, setVal("#composer textarea", "i-0abc123def4567890 를 재부팅해줘"));
-    await ev(a, clickText("보내기"));
-    await sleep(400);
-    log.push("toast-without-title:" + await ev(a, `[...document.querySelectorAll(".toast")].map(t => t.textContent).join("|")`));
-    await ev(a, setVal("#newtitle", "EKS 재부팅 작업"));
-    await ev(a, setVal("#newnick", "alice"));
-    log.push("send:" + await ev(a, clickText("보내기")));
-    await sleep(2500);
-    await shot(a, "3_clarify");
-    log.push("chat:" + await ev(a, panel("chat")));
-    log.push("left:" + await ev(a, panel("left")));
-    await ev(a, setVal("#composer textarea", "t3.micro 하나만 해줘"));
-    log.push("answer:" + await ev(a, clickText("답하기")));
-    await sleep(3000);
-    await shot(a, "4_plan");
-    log.push("center:" + await ev(a, panel("center")));
-    log.push("approve-disabled-for-requester:" + await ev(a, `(() => { const b = [...document.querySelectorAll("#center button")].find(x => x.textContent.trim() === "plan 일괄 승인"); return b ? b.disabled : "none"; })()`));
-    // 절차 추가(확인 명령 포함) → 드래그로 순서 바꾸기(실제 DragEvent)
-    log.push("insert-after-first-row:" + await ev(a, `(() => { const b = [...document.querySelectorAll("#center .srow button")].find(x => x.textContent.trim() === "＋"); if (!b) return false; b.click(); return true; })()`));
+    // 제목 없이 빈 plan을 시작하려 하면 막힌다
+    log.push("empty-without-title:" + await ev(a, clickText("빈 plan으로 시작")));
     await sleep(300);
-    await ev(a, `(() => { const d = document.querySelector("#center .detail"); const inputs = d.querySelectorAll("input"); const set = (e, v) => { e.value = v; e.dispatchEvent(new Event("input", {bubbles:true})); }; set(inputs[0], "VPC 목록 확인"); set(inputs[1], "aws ec2 describe-vpcs"); })()`);
-    log.push("insert-form-text:" + await ev(a, `document.querySelector("#center .detail").innerText.slice(0, 40)`));
-    log.push("add-submit:" + await ev(a, `(() => { const d = document.querySelector("#center .detail"); const b = [...d.querySelectorAll("button")].find(x => x.textContent === "추가"); b.click(); return true; })()`));
+    log.push("toast-without-title:" + await ev(a, `[...document.querySelectorAll(".toast")].map(t => t.textContent).join("|")`));
+    await ev(a, setVal("#newtitle", "연습장 확인"));
+    await ev(a, setVal("#newnick", "alice"));
+    log.push("empty-plan:" + await ev(a, clickText("빈 plan으로 시작")));
     await sleep(1500);
+    await shot(a, "3_empty_scratchpad");
+    log.push("center:" + await ev(a, panel("center")));
+    log.push("composer:" + await ev(a, `(document.querySelector("#composer textarea")||{}).placeholder`));
+    // 명령 만들기: 문서에서 검색 → 고르기 → 필수 값 채우기
+    log.push("builder-open:" + await ev(a, clickText("＋ 명령 만들기")));
+    await sleep(300);
+    const build = async (query, pick, fill, title, chk) => {
+      await ev(a, setVal("#center .card .card input", query));
+      log.push("search:" + await ev(a, clickText("문서에서 찾기")));
+      await sleep(600);
+      log.push("results:" + await ev(a, `[...document.querySelectorAll("#center .card .card .srow b")].map(b => b.textContent).slice(0, 6).join(" | ")`));
+      log.push("pick:" + await ev(a, `(() => { const r = [...document.querySelectorAll("#center .card .card .srow")].find(x => x.querySelector("b").textContent === ${JSON.stringify(pick)}); if (!r) return false; r.click(); return true; })()`));
+      await sleep(400);
+      for (const [ph, val] of fill) await ev(a, `(() => { const e = [...document.querySelectorAll("#center .detail input")].find(x => x.placeholder.startsWith(${JSON.stringify(ph)})); if (!e) return false; e.value = ${JSON.stringify(val)}; e.dispatchEvent(new Event("input", {bubbles:true})); return true; })()`);
+      if (title) await ev(a, `(() => { const e = [...document.querySelectorAll("#center .detail input")].find(x => x.placeholder === "절차 제목"); e.value = ${JSON.stringify(title)}; e.dispatchEvent(new Event("input", {bubbles:true})); })()`);
+      if (chk) await ev(a, `(() => { const e = [...document.querySelectorAll("#center .detail input")].find(x => x.placeholder.startsWith("확인(읽기)")); if (e) { e.value = ${JSON.stringify(chk)}; e.dispatchEvent(new Event("input", {bubbles:true})); } })()`);
+      log.push("preview:" + await ev(a, `(document.querySelector("#center .detail pre")||{innerText:"(없음)"}).innerText`));
+    };
+    await build("describe vpcs", "aws ec2 describe-vpcs", [], "VPC 조회");
+    await shot(a, "4_builder");
+    log.push("add-draft:" + await ev(a, clickText("초안에 추가")));
+    await sleep(1200);
+    // 필수 값이 비어 있어도 초안으로 저장된다(⚠)
+    log.push("builder-open2:" + await ev(a, clickText("＋ 명령 만들기")));
+    await sleep(300);
+    await build("reboot instances", "aws ec2 reboot-instances", [], "인스턴스 재부팅", "aws ec2 describe-instances");
+    log.push("add-incomplete:" + await ev(a, clickText("초안에 추가")));
+    await sleep(1200);
+    log.push("builder-open3:" + await ev(a, clickText("＋ 명령 만들기")));
+    await sleep(300);
+    await build("reboot instances", "aws ec2 reboot-instances", [["--instance-ids", "i-0abc123def4567890"]], "인스턴스 재부팅(완성)", "aws ec2 describe-instances --instance-ids i-0abc123def4567890");
+    log.push("add-complete:" + await ev(a, clickText("초안에 추가")));
+    await sleep(1200);
+    log.push("rows:" + await ev(a, rowIds()));
+    log.push("validation-icons:" + await ev(a, `[...document.querySelectorAll("#center .srow")].map(r => r.getAttribute("data-step") + ":" + [...r.querySelectorAll(".ico, .vi")].map(i => i.textContent.trim()).join("")).join(" , ")`));
+    await shot(a, "5_drafts_incomplete");
+    log.push("send-disabled-before-confirm:" + await ev(a, `(() => { const b = [...document.querySelectorAll("#center button")].find(x => x.textContent.startsWith("검토 요청")); return b ? b.disabled + ":" + b.textContent : "none"; })()`));
+    // 불완전 초안은 확정할 수 없다 → 상세에서 값을 고쳐 확정
+    log.push("confirm-all-valid:" + await ev(a, clickText("요청 가능한 것 모두 포함")));
+    await sleep(1000);
+    log.push("send-after-confirm:" + await ev(a, `(() => { const b = [...document.querySelectorAll("#center button")].find(x => x.textContent.startsWith("검토 요청")); return b ? b.disabled + ":" + b.textContent : "none"; })()`));
+    await shot(a, "5b_confirmed");
+    // 드래그: 두 번째 초안을 첫 번째 앞으로
     const before = await ev(a, rowIds());
-    log.push("rows-before-drag:" + before);
     const ids = before.split(",");
-    const moved = await ev(a, `(() => { const rows = [...document.querySelectorAll("#center .srow")]; const from = rows.find(r => r.getAttribute("data-step").startsWith("custom-")), to = rows[0]; const dt = new DataTransfer();
+    const moved = await ev(a, `(() => { const rows = [...document.querySelectorAll("#center .srow")]; const from = rows[rows.length - 1], to = rows[0]; const dt = new DataTransfer();
       from.dispatchEvent(new DragEvent("dragstart", {bubbles:true, dataTransfer:dt})); to.dispatchEvent(new DragEvent("dragover", {bubbles:true, cancelable:true, dataTransfer:dt})); to.dispatchEvent(new DragEvent("drop", {bubbles:true, cancelable:true, dataTransfer:dt})); return from.getAttribute("data-step"); })()`);
-    await sleep(1500);
+    await sleep(1200);
     const after = await ev(a, rowIds());
-    log.push("dragged:" + moved + " rows-after-drag:" + after + " first-is-dragged:" + (after.split(",")[0] === moved));
-    await shot(a, "5_after_drag");
+    log.push("drag rows-before:" + before + " rows-after:" + after + " first-is-dragged:" + (after.split(",")[0] === moved));
+    log.push("undo:" + await ev(a, clickText("↶")));
+    await sleep(800);
+    log.push("rows-after-undo:" + await ev(a, rowIds()));
+    log.push("redo:" + await ev(a, clickText("↷")) + " rows:" + await ev(a, rowIds()));
+    log.push("undo-again:" + await ev(a, clickText("↶")) + " rows:" + await ev(a, rowIds()));
+    await sleep(500);
+    // 다시 확정(드래그·되돌리기 뒤 확정 상태는 유지되어야 한다)
+    log.push("send-to-apply:" + await ev(a, clickText(await ev(a, `[...document.querySelectorAll("#center button")].find(x => x.textContent.startsWith("검토 요청")).textContent`))));
+    await sleep(1500);
+    log.push("toasts-after-send:" + await ev(a, `[...document.querySelectorAll(".toast")].map(t => t.textContent).join("|")`));
+    await shot(a, "5c_sent");
+    log.push("center-after-send:" + await ev(a, panel("center")));
     // 초대 링크 만들기 → 다른 탭(다른 닉네임)이 참여
     log.push("invite-btn(center header):" + await ev(a, clickText("초대 링크 만들기")));
     await sleep(800);
@@ -84,7 +120,7 @@ const rowIds = () => `[...document.querySelectorAll("#center .srow")].map(r => r
     await sleep(2500);
     await shot(b, "6_bob");
     log.push("bob-tabs-before-approval:" + await ev(b, `[...document.querySelectorAll(".ctab")].map(x => x.textContent).join(",")`));
-    log.push("bob-approve:" + await ev(b, clickText("plan 일괄 승인")));
+    log.push("bob-approve:" + await ev(b, clickText("확정 (일괄 승인)")));
     await sleep(1500);
     log.push("alice-tabs-after-plan-approval(Apply 없어야 함):" + await ev(a, `[...document.querySelectorAll(".ctab")].map(x => x.textContent + (x.className.includes(" on") ? "*" : "")).join(",")`));
     await shot(a, "6b_plan_approved");
@@ -94,13 +130,21 @@ const rowIds = () => `[...document.querySelectorAll("#center .srow")].map(r => r
     log.push("apply-actions:" + await ev(a, `[...document.querySelectorAll("#center .detail button")].map(x => x.textContent.trim()).join("|")`));
     await shot(a, "6c_apply_tab");
     const ico = (tabc, step, label) => ev(tabc, `(() => { const b = document.querySelector('#center [data-step="${step}"] button[aria-label="${label}"]'); if (!b || b.disabled) return b ? "disabled" : "none"; b.click(); return "clicked"; })()`);
-    log.push("read-icon(pre-reboot, alice):" + await ico(a, "pre-reboot", "확인(실행)"));
+    const applyRows = (await ev(a, rowIds())).split(",");
+    log.push("apply-rows:" + applyRows.join(","));
+    const reads = await ev(a, `[...document.querySelectorAll("#center .srow")].filter(r => r.querySelector('button[aria-label="확인(실행)"]')).map(r => r.getAttribute("data-step")).join(",")`);
+    const muts = await ev(a, `[...document.querySelectorAll("#center .srow")].filter(r => r.querySelector('button[aria-label="승인"], span[aria-label="승인"]')).map(r => r.getAttribute("data-step")).join(",")`);
+    log.push("read-steps:" + reads + " change-steps:" + muts);
+    const r0 = reads.split(",")[0], m0 = muts.split(",")[0];
+    log.push("read-icon(" + r0 + ", alice):" + await ico(a, r0, "확인(실행)"));
     await sleep(2000);
-    log.push("approve-icon(reboot, alice=requester):" + await ico(a, "reboot", "승인"));
-    log.push("approve-icon(reboot, bob):" + await ico(b, "reboot", "승인"));
-    await sleep(1500);
-    log.push("run-icon(reboot, bob):" + await ico(b, "reboot", "실행"));
-    await sleep(2500);
+    if (m0) {
+      log.push("approve-icon(" + m0 + ", alice=requester):" + await ico(a, m0, "승인"));
+      log.push("approve-icon(" + m0 + ", bob):" + await ico(b, m0, "승인"));
+      await sleep(1500);
+      log.push("run-icon(" + m0 + ", bob):" + await ico(b, m0, "실행"));
+      await sleep(2500);
+    }
     log.push("row-icons:" + await ev(a, `[...document.querySelectorAll("#center .srow")].map(r => r.getAttribute("data-step") + ":" + [...r.querySelectorAll(".ico")].map(i => i.textContent).join("")).join(", ")`));
     log.push("terminal:" + (await ev(a, `(document.querySelector("#center .term") || {innerText:"(없음)"}).innerText.replace(/\s+/g, " ").slice(0, 260)`)));
     log.push("history-dot:" + await ev(a, `[...document.querySelectorAll("#left .hline")].map(x => x.querySelector(".dot").className + "/" + getComputedStyle(x.querySelector(".dot")).animationName).join(" | ")`));

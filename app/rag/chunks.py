@@ -35,6 +35,8 @@ class Chunk:
     impact: dict = field(default_factory=dict, compare=False, hash=False)
     path: str = ""
     text: str = ""               # 색인용 텍스트
+    required: tuple[str, ...] = field(default=(), compare=False)    # 문서의 필수 옵션(명령 만들기 도우미·초안 검증에 쓴다)
+    optional: tuple[str, ...] = field(default=(), compare=False)
 
     @property
     def command(self) -> str:
@@ -109,6 +111,7 @@ def load_chunks(knowledge_dir: Path | None = None) -> list[Chunk]:
                     id=cid, cli=meta["cli"], service=meta["service"], name=name, topic=meta["topic"],
                     kind=c["kind"], risk=c["risk"], guard=tuple(c.get("guard") or ()),
                     impact=c.get("impact") or {}, path=rel, text="\n".join(x for x in lines if x),
+                    required=tuple(str(x) for x in (c.get("required") or ())), optional=tuple(str(x) for x in (c.get("optional") or ())),
                 )
             )
     return chunks

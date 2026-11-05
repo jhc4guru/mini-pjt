@@ -78,10 +78,25 @@ button.ico:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
 .srow.sel{border-color:var(--accent)}
 .srow.over{border-top:3px solid var(--accent)}
 .srow.s-done{border-left:4px solid var(--ok)}.srow.s-failed{border-left:4px solid var(--bad)}.srow.s-running,.srow.s-approved,.srow.s-awaiting_report,.srow.s-awaiting_confirm{border-left:4px solid var(--accent)}
+.scmd{flex:0 1 38%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:11px ui-monospace,Consolas,monospace;color:var(--muted)}
 .grip{cursor:grab;color:var(--muted);user-select:none;padding:0 2px}
 .stitle{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .detail{border:1px solid var(--accent);border-top:none;border-radius:0 0 6px 6px;padding:7px 9px;margin:0 0 3px;background:var(--card)}
 .dropend{height:12px}.dropend.over{border-top:3px solid var(--accent)}
+.srow.conf{background:var(--code)}
+.todo{font-weight:600;white-space:nowrap}
+.todo-panel{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}
+.todo-box{flex:1;min-width:240px;border:2px solid;border-radius:8px;padding:6px 10px}
+.todo-box.mine{border-color:#16a34a;background:rgba(22,163,74,.08)}
+.todo-box.other{border-color:#d97706;background:rgba(217,119,6,.08)}
+.todo-h{font-weight:700;margin-bottom:3px}
+.todo-line{cursor:pointer;padding:1px 0;font-size:13px}
+.req-line{margin:3px 0;padding:3px 6px;border-left:4px solid #999}
+.req-line.mine{border-left-color:#16a34a;background:rgba(22,163,74,.08)}
+.req-line.other{border-left-color:#d97706;background:rgba(217,119,6,.08)}
+.req-line.done{opacity:.7}
+.ptitle{font:inherit;font-weight:600;border:1px solid transparent;background:transparent;padding:1px 4px;min-width:120px;max-width:260px}
+.ptitle:hover,.ptitle:focus{border-color:var(--line, #ccc);background:var(--bg, #fff)}
 .legend{display:flex;gap:10px;align-items:center;margin:2px 0 6px}
 /* 우측 대화 */
 .bubble{border:1px solid var(--line);border-radius:10px;padding:6px 10px;margin:0 0 8px;max-width:94%}
@@ -134,11 +149,11 @@ const LABEL = {
   risk: {low:"위험 낮음", medium:"위험 중간", high:"위험 높음"},
   flag: {open_cidr:"전체 개방(0.0.0.0/0)", wide_cidr:"넓은 CIDR", wildcard_principal:"와일드카드 Principal", wildcard_action:"와일드카드 Action", admin_policy:"관리자 정책",
     recursive_delete:"재귀 삭제", sync_delete:"sync --delete", delete_all:"전체 삭제", namespace_delete:"네임스페이스 삭제", public_access_relax:"퍼블릭 접근 완화",
-    public_acl:"공개 ACL", multiple_targets:"다중 대상", prod_target:"prod 대상", fallback:"문서 근거 없음", unknown_impact:"영향 불명", iac_drift:"IaC 코드와 어긋날 수 있음",
+    public_acl:"공개 ACL", multiple_targets:"다중 대상", prod_target:"prod 대상", fallback:"문서 근거 없음", unknown_impact:"영향 불명", iac_drift:"IaC 코드와 어긋날 수 있음", uses_output:"앞 절차 결과 사용",
     scale_to_zero:"replicas=0", policy_unreadable:"정책 파일을 읽을 수 없음", user_data_script:"user-data 스크립트", negated_element:"NotAction/NotResource 등 부정 요소"},
   req: {open_cidr_confirm:"전체 개방: 요청자의 사유 입력 + 다른 사람의 확인", strong_warning:"강한 경고: 다른 사람의 확인", dry_run_first:"같은 명령의 dry-run을 먼저 실행해야 함",
     prod_warning:"prod 대상: 다른 사람의 확인", fallback_approval:"AI 추정: 다른 사람의 승인", show_file_contents:"파일 내용 확인: 다른 사람의 확인"},
-  code: {requester_cannot_approve_plan:"요청자는 plan을 승인할 수 없습니다.", requester_cannot_approve_change:"요청자는 변경 step을 승인할 수 없습니다.",
+  code: {comment_required:"반려 이유를 한 줄 이상 적으세요.", comment_too_long:"코멘트가 너무 깁니다(전체 500자, 절차별 300자까지).", requester_cannot_reject_plan:"요청자는 자기 plan을 반려할 수 없습니다. 연습장에서 고치고 다시 검토를 요청하세요.", plan_not_rejectable:"지금은 반려할 수 없습니다(검토 요청 뒤, apply 시작 전에만 가능).", requester_cannot_approve_plan:"요청자는 plan을 승인할 수 없습니다.", requester_cannot_approve_change:"요청자는 변경 step을 승인할 수 없습니다.",
     plan_hash_mismatch:"화면의 plan과 서버의 plan이 다릅니다. 새로 고침하세요.", stale_plan_version:"더 새로운 plan 버전이 있습니다.", not_a_participant:"참여자가 아닙니다.",
     gate_not_approved:"게이트 승인이 필요합니다.", previous_phase_incomplete:"앞 phase가 끝나지 않았습니다.", state_check_required:"적용됐을 수 있어 상태 확인 보고가 필요합니다.",
     retry_limit_reached:"재시도 횟수 상한에 도달했습니다.", requester_cannot_skip:"요청자는 건너뛸 수 없습니다.", requester_cannot_confirm:"요청자는 이 항목을 확인할 수 없습니다.",
@@ -149,7 +164,10 @@ const LABEL = {
     missing_check:"변경 명령에는 확인(읽기) 명령이 필요합니다.", blocked_command:"명령 가드가 막은 명령입니다.", unknown_or_forward_reference:"순서나 참조가 맞지 않습니다.",
     duplicate_step_id:"같은 id의 절차가 있습니다.", input_blocked:"입력이 차단되었습니다(비밀값·지시문 등).", locked_step_changed:"완료된 절차는 바꿀 수 없습니다.",
     locked_step_removed:"완료된 절차는 지울 수 없습니다.", locked_step_reordered:"완료된 절차의 순서는 바꿀 수 없습니다.", locked_step_moved:"완료된 절차는 옮길 수 없습니다.",
-    retry_by_requester_only:"요청자만 다시 시도할 수 있습니다.", retry_not_expected:"지금은 다시 시도할 수 없습니다(중단된 작업만 가능).", confirm_not_allowed:"이 절차는 확인만으로 진행할 수 없습니다(승인이 필요합니다)."},
+    not_confirmable:"검토 요청에 포함할 수 없는 절차입니다(⚠·⛔를 먼저 해결하세요).", nothing_confirmed:"검토 요청에 포함한 절차가 없습니다.", send_not_allowed:"지금은 검토를 요청할 수 없습니다(apply 진행 중이면 일시정지 후 요청하세요).",
+    step_locked_done:"완료된 절차는 바꿀 수 없습니다.", step_in_apply:"apply 진행 중인 절차는 바꿀 수 없습니다.", session_closed:"끝난 작업입니다.", nothing_to_undo:"되돌릴 것이 없습니다.", nothing_to_redo:"다시 실행할 것이 없습니다.",
+    undo_blocked_by_lock:"잠긴 절차가 있어 되돌릴 수 없습니다.", unknown_scratch_op:"알 수 없는 연습장 동작입니다.", lookup_failed:"조회 결과를 읽지 못했습니다.", lookup_unavailable:"조회를 쓸 수 없습니다.", after_not_in_phase:"같은 단계 안에서만 그 뒤에 넣을 수 있습니다.", invalid_step:"절차 값이 올바르지 않습니다.", bad_steps:"추가할 절차가 올바르지 않습니다.",
+    retry_by_requester_only:"요청자만 다시 시도할 수 있습니다.", edit_unavailable:"말로 수정은 지금 쓸 수 없습니다.", busy:"에이전트가 다른 요청을 처리 중입니다. 잠시 뒤에 다시 시도하세요.", nothing_to_edit:"연습장에 고칠 절차가 없습니다.", proposal_not_open:"이미 처리했거나 만료된 수정안입니다.", retry_not_expected:"지금은 다시 시도할 수 없습니다(중단된 작업만 가능).", confirm_not_allowed:"이 절차는 확인만으로 진행할 수 없습니다(승인이 필요합니다)."},
 };
 const lab = (map, k) => LABEL[map][k] || k;
 const codeText = c => { const base = String(c).split(":")[0]; return LABEL.code[c] || LABEL.code[base] || c; };
@@ -161,7 +179,7 @@ const OPCLASS = {read:"b-ok", mutate:"b-bad", manual:"b-man", none:"b-man"};
 // 브라우저에는 자격(세션 id, 닉네임, 멤버 토큰)만 둔다. 제목·상태·결과 같은 이력의 내용은 모두 서버 DB에서 읽는다.
 // 이 탭이 보고 있는 항목은 sessionStorage에 둔다(탭마다 다른 닉네임으로 같은 서버를 열어 4-eyes를 확인할 수 있게).
 const S = { sid:null, token:null, nick:null, ws:null, view:null, pending:null, drafts:{}, conn:"끊김", newTask:false, history:[], sel:null, tab:"center", ctab:"plan",
-            invite:null, addAt:null, busy:false, drag:null, lastHist:0, autoOff:false, act:{} };
+            invite:null, addAt:null, busy:false, drag:null, lastHist:0, autoOff:false, act:{}, bld:null, req:{}, rid:0, echo:null, kmenu:false, rej:null };
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
@@ -174,6 +192,12 @@ function creds() {
   return store.get("hist", []).map(e => ({sid:e.sid, nick:e.nick, token:e.token}));       // 이전 버전의 저장 형식에서 이어받기
 }
 function addCred(c) { store.set("creds", [c, ...creds().filter(x => !(x.sid === c.sid && x.nick === c.nick))].slice(0, 50)); }
+function dropCredsOf(sid) { store.set("creds", creds().filter(x => x.sid !== sid)); }
+const fmtTs = t => t ? new Date(t * 1000).toLocaleString("ko-KR", {month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:false}) : "";
+function timesLine(times) {
+  const t = times || {};
+  return [["생성", t.created], ["Plan 전송", t.plan], ["Plan 승인", t.approved], ["Apply 시작", t.apply], ["반려", t.rejected], ["종료", t.ended], ["마지막 수정", t.updated]].filter(x => x[1]).sort((x, y) => x[1] - y[1]).map(x => x[0] + " " + fmtTs(x[1])).join(" · ");
+}
 function dropCred(sid, nick) { store.set("creds", creds().filter(x => !(x.sid === sid && x.nick === nick))); }
 function toast(msg) { const t = h("div", {class:"toast"}, msg); document.body.append(t); setTimeout(() => t.remove(), 5000); }
 
@@ -184,6 +208,16 @@ async function api(path, body) {
   if (!r.ok) { const d = j.detail || {}; throw new Error(d.message || codeText(d.code || r.status)); }
   return j;
 }
+// 같은 작업을 다른 닉네임(탭)으로 열었어도 한 줄만 보인다. 지금 열린 작업은 열린 닉네임으로, 그 밖에는 요청자 닉네임을 우선한다.
+function dedupeHistory(items, activeSid, activeNick) {
+  const bySid = new Map();
+  for (const e of items) {
+    const cur = bySid.get(e.sid), mine = e.sid === activeSid && e.nick === activeNick;
+    const curMine = cur && cur.sid === activeSid && cur.nick === activeNick;
+    if (!cur || mine || (!curMine && e.nick === e.requester && cur.nick !== cur.requester)) bySid.set(e.sid, e);
+  }
+  return [...bySid.values()].sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+}
 async function loadHistory() {
   const items = creds();
   if (!items.length) { S.history = []; return renderLeft(); }
@@ -191,14 +225,15 @@ async function loadHistory() {
     const r = await api("/api/history", {items:items.map(c => ({sid:c.sid, token:c.token}))});
     const gone = r.items.filter(i => !i.valid).map(i => i.sid);
     if (gone.length) store.set("creds", creds().filter(c => !gone.includes(c.sid)));      // 서버에 없는 세션의 자격은 지운다
-    S.history = r.items.filter(i => i.valid).map(i => ({...i, token:(items.find(c => c.sid === i.sid && c.nick === i.nick) || {}).token}));
+    const all = r.items.filter(i => i.valid).map(i => ({...i, token:(items.find(c => c.sid === i.sid && c.nick === i.nick) || {}).token}));
+    S.history = dedupeHistory(all, S.sid, S.nick);
   } catch { /* 서버에 닿지 않으면 이전 목록을 둔다 */ }
   renderLeft();
 }
 function closeWs() { if (S.ws) { try { S.ws.onclose = null; S.ws.close(); } catch {} } S.ws = null; }
 function openSession(c) {
   closeWs();
-  Object.assign(S, {sid:c.sid, token:c.token, nick:c.nick, view:null, pending:null, conn:"연결 중", newTask:false, sel:null, invite:null, addAt:null, autoOff:false, ctab:"plan"});
+  Object.assign(S, {sid:c.sid, token:c.token, nick:c.nick, view:null, pending:null, conn:"연결 중", newTask:false, sel:null, invite:null, addAt:null, autoOff:false, ctab:"plan", bld:null, req:{}, echo:null, rej:null});
   store.sset("active", {sid:c.sid, nick:c.nick});
   connect(); render();
 }
@@ -216,7 +251,10 @@ function connect() {
     const m = JSON.parse(ev.data);
     if (m.type === "view") { S.conn = "연결됨"; setView(m.data); }
     else if (m.type === "result") {
+      const cb = m.id && S.req[m.id];
+      if (cb) { delete S.req[m.id]; cb(m); return; }                                   // 도우미(검색·조회·연습장 연산)의 응답은 요청한 쪽이 처리한다
       if (m.invite) { S.invite = location.origin + "/?s=" + S.sid + "&i=" + m.invite; renderCenter(); }
+      if (!m.ok && S.echo) { S.echo = null; renderChat(); renderComposer(); }                    // 서버가 거부하면 임시로 보여 준 내 메시지를 거둔다
       if (!m.ok) toast(codeText(m.code) + (m.message ? " — " + m.message : "") + (m.codes ? " (" + m.codes.slice(0, 3).map(codeText).join(", ") + ")" : ""));
     }
   };
@@ -229,10 +267,12 @@ function connect() {
   };
 }
 function send(msg) { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(msg)); else toast("서버와 연결되어 있지 않습니다."); }
-const typing = () => { const a = document.activeElement; return a && ["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName) && ($center.contains(a) || $chat.contains(a) || $comp.contains(a)); };
+const typing = () => { const a = document.activeElement; if (!a || !["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName)) return false;
+  if ($comp.contains(a)) return !!(a.value || "").trim();                                    // 입력창은 쓰는 글이 있을 때만 보호한다(보낸 직후 빈 입력창이 새 상태를 막지 않게)
+  return $center.contains(a) || $chat.contains(a); };
 function adopt(v) {
   const prev = S.view;
-  S.view = v; S.pending = null; S.act = {};                       // 새 상태가 오면 눌러 둔 아이콘의 "진행 중" 표시를 푼다
+  S.view = v; S.pending = null; S.act = {}; S.echo = null;                       // 새 상태가 오면 눌러 둔 아이콘의 "진행 중" 표시를 푼다
   if (!prev || prev.session.id !== v.session.id) S.ctab = ["applying", "paused", "completed"].includes(v.session.state) ? "apply" : "plan";
   else if (prev.session.state !== "applying" && v.session.state === "applying") S.ctab = "apply";         // apply가 시작되면 Apply 탭으로 넘어간다
   render();
@@ -269,10 +309,10 @@ function renderLeft() {
   for (const e of S.history) {
     const c = e.steps || {}, [cls, label] = dotOf(e);
     const tip = [e.title, label, "요청자 " + e.requester + " · 내 닉네임 " + e.nick + " · 작업자 " + (e.participants || 1) + "명",
-      Object.keys(c).length ? ["done", "failed", "skipped", "pending"].filter(k => c[k]).map(k => lab("step", k) + " " + c[k]).join(" · ") : "절차 없음", e.risk ? lab("risk", e.risk) : "", new Date(e.updated_at * 1000).toLocaleString()].filter(Boolean).join("\n");
+      Object.keys(c).length ? ["done", "failed", "skipped", "pending"].filter(k => c[k]).map(k => lab("step", k) + " " + c[k]).join(" · ") : "절차 없음", e.risk ? lab("risk", e.risk) : "", ...(e.times ? [["생성", e.times.created], ["Plan 전송", e.times.plan], ["Apply 시작", e.times.apply], ["반려", e.times.rejected], ["종료", e.times.ended], ["마지막 수정", e.times.updated]].filter(x => x[1]).map(x => x[0] + " " + fmtTs(x[1])) : [fmtTs(e.updated_at)])].filter(Boolean).join("\n");
     kids.push(h("div", {class:"hline" + (e.sid === S.sid && e.nick === S.nick ? " active" : ""), title:tip, onclick: () => openSession(e)},
       h("span", {class:"t"}, e.title),
-      h("button", {class:"x", title:"이 브라우저의 목록에서만 지웁니다(서버 기록은 그대로)", onclick: ev => { ev.stopPropagation(); dropCred(e.sid, e.nick); if (e.sid === S.sid && e.nick === S.nick) startNewTask(); loadHistory(); }}, "×"),
+      h("button", {class:"x", title:"이 브라우저의 목록에서만 지웁니다(서버 기록은 그대로)", onclick: ev => { ev.stopPropagation(); dropCredsOf(e.sid); if (e.sid === S.sid) startNewTask(); loadHistory(); }}, "×"),
       h("span", {class:"dot " + cls, "aria-label":label})));
   }
   kids.push(h("div", {class:"sec"}, "상태"),
@@ -300,10 +340,11 @@ function renderCenter() {
     const v = S.view;
     if (!v) { $center.append(h("div", {class:"banner"}, "연결 중입니다… (" + S.conn + ")")); return; }
     $center.append(headerPanel(v));
-    if (!v.plan) { $center.append(h("div", {class:"card muted"}, v.session.state === "draft" ? "아직 절차가 없습니다. 오른쪽 대화에서 작업을 설명하거나 추가 정보를 알려 주세요." : "절차가 없습니다.")); }
+    const showEditor = !!v.scratch;                                                                       // 연습장은 에이전트가 되묻거나 멈춰 있어도 쓸 수 있다
+    if (!showEditor) { $center.append(h("div", {class:"card muted"}, "절차가 없습니다.")); }
     else {
       const tab = effTab(v);
-      if (tab === "apply" && !S.sel && !S.autoOff && ["applying", "paused"].includes(v.session.state)) {          // apply 중에는 지금 처리할 차례인 절차를 자동으로 펼친다
+      if (tab === "apply" && v.plan && !S.sel && !S.autoOff && ["applying", "paused"].includes(v.session.state)) {          // apply 중에는 지금 처리할 차례인 절차를 자동으로 펼친다
         const next = v.plan.phases.flatMap(p => p.steps).find(x => !["done", "skipped", "aborted"].includes((v.steps[x.id] || {}).state));
         if (next) S.sel = next.id;
       }
@@ -328,9 +369,18 @@ function newTaskPanel() {
   iac.addEventListener("change", () => S.drafts.iac = iac.checked);
   if (S.drafts.iac) iac.setAttribute("checked", "");
   return h("div", {class:"card"}, h("h2", {}, "새 작업"),
-    h("p", {class:"small muted"}, "제목을 정하고, 오른쪽 대화에 하고 싶은 작업을 입력하면 이 제목으로 저장되고 절차 목록이 만들어집니다. 작업마다 대화와 절차가 따로입니다."),
+    h("p", {class:"small muted"}, "두 가지로 시작할 수 있습니다. ① 제목만 정하고 ‘빈 plan으로 시작’: 연습장에서 명령을 직접 쓰거나 만들고, 필요하면 오른쪽 대화로 에이전트에게 초안을 요청합니다. ② 제목을 정한 뒤 오른쪽 대화에 작업을 설명: 에이전트가 만든 계획이 연습장에 채워집니다. 작업마다 대화와 절차가 따로입니다."),
     h("div", {class:"row", style:"margin-bottom:8px"}, title), h("div", {class:"row"}, nick),
-    h("label", {style:"margin-top:8px"}, iac, " 인프라를 Terraform(IaC)으로 관리합니다(CLI 변경 뒤 코드 동기화 step을 넣습니다)"));
+    h("label", {style:"margin-top:8px"}, iac, " 인프라를 Terraform(IaC)으로 관리합니다(CLI 변경 뒤 코드 동기화 step을 넣습니다)"),
+    h("div", {class:"row", style:"margin-top:10px"}, h("button", {class:"primary", onclick: async () => {
+      const t = (S.drafts.title || "").trim(), n = (S.drafts.nick || store.get("nick", "")).trim();
+      if (!t) { toast("작업 제목을 입력하세요."); title.focus && title.focus(); return; }
+      if (!n) { toast("닉네임을 입력하세요."); return; }
+      try { const r = await api("/api/sessions", {nick:n, title:t, request:"", iac_managed:!!S.drafts.iac});
+        store.set("nick", n); S.drafts.title = ""; S.drafts.iac = false;
+        const c = {sid:r.session_id, nick:n, token:r.member_token}; addCred(c); S.invite = location.origin + r.join_path; openSession(c); loadHistory();
+      } catch (e) { toast(e.message); } }}, "빈 plan으로 시작"),
+      h("span", {class:"small muted"}, "요청 없이 제목만으로 빈 연습장을 열고 직접 절차를 채웁니다. 오른쪽 대화로 에이전트에게 초안을 요청할 수도 있습니다.")));
 }
 function joinPanel(sid, inv) {
   const nick = h("input", {placeholder:"닉네임(영문·숫자·한글·_·-, 20자)", maxlength:20, value:S.drafts.nick || store.get("nick", "")});
@@ -346,13 +396,14 @@ function joinPanel(sid, inv) {
 // 제목 아래: 상태 배지, 작업자, 초대 링크(작업마다 따로이므로 제목 아래에 둔다)
 function headerPanel(v) {
   const s = v.session, you = v.you, r = v.review && v.review.facts;
-  const kids = [h("div", {class:"row"}, h("h1", {}, s.title || "(제목 없음)"), h("span", {class:"badge b-acc"}, lab("state", s.state)),
+  const kids = [h("div", {class:"row"}, h("h1", {}, s.title || "(제목 없음)"), h("span", {class:"badge b-acc"}, v.rejection && s.state === "draft" ? "반려됨 · 수정 중" : lab("state", s.state)),
       r ? h("span", {class:"badge " + (r.risk_level === "high" ? "b-bad" : r.risk_level === "medium" ? "b-warn" : "b-ok")}, "위험 등급: " + lab("risk", r.risk_level) + " (서버 규칙)") : null,
       h("span", {class:"badge" + (S.conn === "연결됨" ? " b-ok" : " b-warn")}, S.conn))];
   const people = [h("span", {class:"small muted"}, "작업자")];
   for (const p of v.participants) people.push(h("span", {class:"badge" + (p.nick === you.nick ? " b-acc" : "")}, "● " + p.nick + (p.role === "requester" ? " (요청자)" : " (승인자)") + (p.nick === you.nick ? " ← 나" : "")));
   if (you.role === "requester" && !["completed", "aborted"].includes(s.state)) people.push(h("button", {class:"small", title:"새로 만들면 이전 링크는 쓸 수 없습니다", onclick: () => send({type:"create_invite"})}, "초대 링크 만들기"));
   kids.push(h("div", {class:"row", style:"margin-top:5px"}, people));
+  if (s.times) kids.push(h("div", {class:"small muted", style:"margin-top:4px", "data-times":"1"}, timesLine(s.times)));
   if (S.invite && you.role === "requester") kids.push(h("div", {class:"row", style:"margin-top:4px"}, h("input", {readonly:true, value:S.invite, style:"flex:1;min-width:200px", onclick: ev => ev.target.select()}),
     h("button", {class:"small", onclick: () => navigator.clipboard.writeText(S.invite).then(() => toast("초대 링크를 복사했습니다"), () => toast("복사하지 못했습니다. 직접 선택해 복사하세요."))}, "복사")));
   return h("div", {class:"card"}, kids);
@@ -371,23 +422,277 @@ function reviewPanel(v) {
 }
 const legend = () => h("div", {class:"legend small muted"}, h("span", {class:"actor agent"}, "[AGENT]"), "서버가 실행", h("span", {class:"actor manual"}, "[MANUAL]"), "사람이 직접 실행(코드 변경·터미널·체크)");
 
-// ---- Plan 탭: 검토·수정·승인 ----
+// ---- Plan 탭: 연습장(초안). 틀려도 저장되고, 확정한 절차만 Apply로 보낸다 ----
+const ISSUE = {
+  command_required: () => "명령이 비어 있습니다", ref_unknown_step: d => "앞 절차 결과 참조가 없는 절차를 가리킵니다: " + d, ref_order: d => "참조한 절차(" + d + ")가 이 절차보다 뒤에 있습니다. 순서를 바꾸세요",
+  ref_target_not_json: d => "참조한 절차(" + d + ")의 명령에 --query 또는 --output text가 있어 JSON 출력이 아닙니다. 그 옵션을 빼세요", ref_target_not_runnable: d => "참조한 절차(" + d + ")는 서버가 실행하지 않아 결과가 없습니다", ref_not_allowed_here: () => "앞 절차 결과 참조는 서버가 실행하는 CLI 절차에서만 쓸 수 있습니다", checklist_required: () => "사람이 할 일(체크리스트)을 한 줄 이상 적으세요", blocked: d => "가드가 막은 명령입니다" + (d ? " (" + d + ")" : ""), kind_mismatch: () => "종류(자동/수동)와 명령이 맞지 않습니다",
+  must_be_read: () => "읽기 명령이어야 합니다", missing_param: d => "필수 옵션이 없습니다: " + d, title_required: () => "제목을 입력하세요", poll_spec_required: () => "폴링 설정(간격·최대 시간·완료 조건)이 필요합니다",
+  poll_spec_unexpected: () => "폴링 절차가 아닌데 폴링 설정이 있습니다", unknown_ref: d => "없는 절차를 가리킵니다: " + d, order: d => "앞에 있어야 할 절차가 뒤에 있습니다: " + d,
+  missing_check: () => "변경 절차 뒤에 확인(읽기) 절차가 필요합니다", check_target_not_change: d => "확인 대상이 변경 절차가 아닙니다: " + d,
+};
+const issueText = i => (ISSUE[i.code] || (() => i.code))(i.detail);
+const VGLYPH = {ok:["✔", "ok", "검토 요청에 포함 가능"], warn:["⚠", "warn", "보완이 필요합니다"], err:["⛔", "bad", "가드가 막았거나 명령이 비어 있습니다(삭제가 아닙니다)"]};
+const actorOfDraft = s => (s.kind === "manual" || s.kind === "iac" || (s.kind === "check" && !s.command)) ? "MANUAL" : "AGENT";
+const ORIGIN = {agent:"에이전트 제안", auto:"서버 추가", user:"직접"};
+const NAMED_OPTIONS = ["--cluster-name", "--name", "--nodegroup-name", "--auto-scaling-group-name", "--auto-scaling-group-names", "--bucket", "--role-name", "--user-name", "--policy-name", "--namespace", "-n", "--launch-template-name"];
+const LOOKUP_OPTIONS = {"--subnet-id":[["subnet", "서브넷 조회"]], "--security-group-ids":[["sg", "보안 그룹 조회"]], "--group-id":[["sg", "보안 그룹 조회"]], "--vpc-id":[["vpc", "VPC 조회"]],
+  "--image-id":[["ami_ubuntu", "Ubuntu AMI"], ["ami_al2023", "Amazon Linux 2023 AMI"]]};
+// 앞 절차(서버가 실행)의 결과에서 리소스 ID를 꺼내 쓰는 참조 `@{절차.필드}`의 후보(D-48). beforeId가 있으면 그 절차보다 앞의 것만, 없으면 모두.
+function refChoices(v, beforeId) {
+  const out = [];
+  for (const ph of (v.scratch ? v.scratch.phases : [])) for (const s of ph.steps) {
+    if (beforeId && s.id === beforeId) return out;
+    for (const f of (s.ref_fields || [])) out.push({value:"@{" + s.id + "." + f.path + "}", label:(s.title || s.id) + " → " + f.label});
+  }
+  return out;
+}
+const sc = op => send({type:"scratch", ...op});
+function ask(msg, cb) { const id = "r" + (++S.rid); S.req[id] = cb; send({...msg, id}); }
+const askScratch = (op, done) => ask({type:"scratch", ...op}, m => { if (!m.ok) toast(codeText(m.code) + (m.codes ? " (" + m.codes.slice(0, 3).map(issueName).join(", ") + ")" : "")); else if (done) done(m); });
+const issueName = c => ISSUE[c] ? ISSUE[c]() : codeText(c);
+
+// 빈 절차를 만들어 바로 펼친다(명령을 직접 쓴다). 서버는 비어 있어도 초안으로 저장하고 ⛔(명령 필요)로 알려 준다.
+const BLANKS = {cli:{kind:"cli", title:"새 절차", command:""}, manual:{kind:"manual", title:"수동 명령", command:""}, iac:{kind:"iac", title:"IaC 코드 변경", checklist:["Terraform 코드 변경 PR 작성", "terraform plan 결과 확인", "승인 후 terraform apply"]},
+  check:{kind:"check", title:"수동 확인", checklist:["확인할 내용을 적으세요"]}};
+function addBlank(after, phase, kind) {
+  const k = kind || "cli";
+  askScratch({op:"add_step", step:BLANKS[k], ...(after ? {after} : phase ? {phase} : {})}, m => { const id = (m.added || [])[0]; if (id) { S.sel = id; S.autoOff = true; } S.kmenu = false; renderCenter();
+    toast(k === "cli" ? "빈 절차를 만들었습니다. 명령을 쓰고 ‘수정 저장’을 누르세요." : "수동 절차를 만들었습니다. 내용을 고치고 ‘수정 저장’을 누르세요(서버가 실행하지 않고 사람이 합니다)."); });
+}
 function planView(v) {
-  const plan = v.plan, st = v.session.state, editable = planEditable(v), isReq = v.you.role === "requester";
-  const kids = [h("div", {class:"row", style:"justify-content:space-between"}, h("div", {class:"pane-title"}, "Plan — 절차 검토"),
-    h("span", {class:"small muted"}, "v" + v.version + " · " + (v.plan_status === "approved" ? "승인·해시 잠금" : v.plan_status === "superseded" ? "대체됨" : "검토 중") + " · 해시 " + v.plan_hash.slice(0, 12))), h("p", {class:"small"}, plan.summary)];
-  const acts = [];
-  if (st === "plan_review") acts.push(h("button", {class:"primary", disabled: isReq, title: isReq ? "요청자는 승인할 수 없습니다" : "", onclick: () => send({type:"approve_plan", version:v.version, hash:v.plan_hash})}, "plan 일괄 승인"),
-    isReq ? h("span", {class:"small muted"}, "다른 작업자가 승인해야 합니다.") : null);
-  if (st === "plan_approved") acts.push(h("button", {class:"primary", onclick: () => { S.ctab = "apply"; send({type:"start_apply"}); }}, "apply 진행 →"),
-    h("span", {class:"small muted"}, "plan이 승인되었습니다. 진행하면 Apply 탭에서 절차별로 실행합니다. 지금 고치면 승인이 풀립니다."));
-  if (st === "paused") acts.push(h("span", {class:"small muted"}, "일시정지 중입니다. 남은 절차를 고친 뒤 다시 승인받으면 이어서 진행합니다(완료된 절차는 바꿀 수 없습니다)."));
-  if (acts.length) kids.push(h("div", {class:"row", style:"margin:4px 0 6px"}, acts));
-  if (plan.warnings && plan.warnings.length) kids.push(h("div", {class:"small muted"}, "서버 경고: " + plan.warnings.join(", ")));
-  kids.push(legend());
-  if (editable) kids.push(h("div", {class:"small muted"}, "절차를 끌어서(⋮⋮) 같은 phase 안에서 순서를 바꾸고, 각 줄의 ＋로 그 뒤에 절차를 끼워 넣을 수 있습니다. 절차를 눌러 내용을 보거나 수정·삭제합니다."));
-  for (const ph of plan.phases) kids.push(phaseView(v, ph, "plan", editable));
+  const st = v.session.state, scr = v.scratch, isReq = v.you.role === "requester", total = scr.total, conf = scr.confirmed;
+  const editable = !["completed", "aborted"].includes(st);
+  const kids = [h("div", {class:"row", style:"justify-content:space-between"}, h("div", {class:"pane-title"}, "Plan — 연습장"), h("span", {class:"small muted"}, "검토 요청에 포함 " + conf + " / 전체 " + total + " 절차"))];
+  kids.push(h("p", {class:"small muted"}, "여기는 연습장입니다. 틀려도 저장되고 줄마다 상태(✔ 포함 가능 · ⚠ 보완 필요 · ⛔ 막힘: 가드가 막았거나 명령이 빔 — 삭제가 아닙니다)만 알려 줍니다. 체크박스로 ‘검토 요청에 포함’한 절차만 [검토 요청]을 누르면 plan이 되고, 요청자가 아닌 확인자가 ‘확정(일괄 승인)’해야 apply로 갈 수 있습니다."));
+  if (v.rejection) kids.push(h("div", {class:"banner", style:"border-left:5px solid #dc2626", "data-rejection":"1"}, h("b", {}, "반려됨 — " + v.rejection.by + ": "), v.rejection.summary,
+    h("div", {class:"small muted"}, "코멘트가 달린 절차는 아래에 💬로 표시됩니다. 고친 뒤 다시 [검토 요청]을 누르세요." + (Object.keys(v.rejection.steps || {}).length ? " (절차 코멘트 " + Object.keys(v.rejection.steps).length + "건)" : ""))));
+  if (v.plan) kids.push(sentPlanCard(v, scr));
+  const canSend = ["draft", "plan_review", "plan_approved", "paused"].includes(st);
+  const tb = [h("button", {title:"명령을 직접 한 줄로 씁니다. 틀려도 저장되고 상태만 알려 줍니다", onclick: () => addBlank(null, null)}, "＋ 직접 입력"),
+    h("button", {title:"서버가 실행하지 않고 사람이 하는 절차(IaC 코드 변경, 수동 확인, 수동 명령)", onclick: () => { S.kmenu = !S.kmenu; renderCenter(); }}, "＋ 수동·IaC ▾"),
+    h("button", {onclick: () => { S.bld = {open:true, query:"", results:[], picked:null, vals:{}, opts:{}, extra:"", title:"", chk:"", after:null, phase:null, lookups:{}}; renderCenter(); }}, "＋ 명령 만들기"),
+    h("button", {onclick: () => sc({op:"add_phase", title:"새 단계"})}, "＋ 단계"),
+    h("button", {onclick: () => sc({op:"confirm_valid"}), title:"✔ 상태인 절차를 묶음째 한꺼번에 검토 요청에 포함합니다"}, "요청 가능한 것 모두 포함"),
+    h("button", {disabled: !scr.undo, onclick: () => sc({op:"undo"}), title:"되돌리기"}, "↶"), h("button", {disabled: !scr.redo, onclick: () => sc({op:"redo"}), title:"다시 실행"}, "↷"),
+    h("span", {style:"flex:1"}),
+    h("button", {class:"primary", disabled: !canSend || conf === 0, title: !canSend ? "apply 진행 중에는 보낼 수 없습니다(일시정지 후 가능)" : conf === 0 ? "검토 요청에 포함한 절차가 없습니다" : "요청자가 아닌 확인자가 확정(승인)해야 apply로 갈 수 있습니다", onclick: () => send({type:"send_to_apply"})},
+      st === "paused" ? "재계획 검토 요청 (" + conf + "개)" : "검토 요청 (" + conf + "개)")];
+  kids.push(h("div", {class:"row", style:"margin:6px 0"}, tb), legend());
+  if (S.kmenu) kids.push(h("div", {class:"row small", style:"margin:-2px 0 6px;gap:6px"}, h("span", {class:"muted"}, "사람이 하는 절차:"),
+    h("button", {class:"small", title:"코드 변경·terraform plan/apply를 사람이 수행하고 체크리스트로 확인합니다", onclick: () => addBlank(null, null, "iac")}, "IaC 코드 변경"),
+    h("button", {class:"small", title:"실행 없이 사람이 확인하는 체크리스트", onclick: () => addBlank(null, null, "check")}, "수동 확인"),
+    h("button", {class:"small", title:"문서에서 수동으로 지정된 명령(kubectl exec 등)을 사람이 자기 터미널에서 실행", onclick: () => addBlank(null, null, "manual")}, "수동 명령")));
+  if (S.bld && S.bld.open) kids.push(builderPanel(v));
+  if (!scr.phases.length) kids.push(h("div", {class:"banner"}, "아직 절차가 없습니다. ‘＋ 명령 만들기’로 문서에서 명령을 찾아 필수 값을 채우거나, 오른쪽 대화에 작업을 설명하면 에이전트가 초안을 만듭니다."));
+  for (const ph of scr.phases) kids.push(dphaseView(v, ph, editable));
   return h("div", {class:"card"}, kids);
+}
+
+function sentPlanCard(v, scr) {
+  const st = v.session.state, isReq = v.you.role === "requester";
+  const kids = [h("div", {class:"small"}, h("b", {}, "Apply용 plan v" + v.version), " · " + (v.plan_status === "approved" ? "확정(승인)됨·해시 잠금" : v.plan_status === "superseded" ? "대체됨" : v.plan_status === "rejected" ? "반려됨(수정 후 다시 검토 요청)" : "확인자 확정(승인) 대기") + " · 해시 " + v.plan_hash.slice(0, 12) + " · " + v.plan.phases.reduce((a, p) => a + p.steps.length, 0) + "개 절차")];
+  const acts = [];
+  const steps = v.plan.phases.flatMap(p => p.steps), pre = v.preapprovable || [], blockers = v.preapprove_blockers || {};
+  if (["plan_review", "plan_approved"].includes(st) && (pre.length || Object.keys(blockers).length)) {
+    const titleOf = id => ((steps.find(x => x.id === id) || {}).title || id);
+    kids.push(h("div", {class:"small", "data-preapprove":"1", style:"margin-top:4px"}, st === "plan_review" ? h("b", {}, "확정(일괄 승인)하면: ") : h("b", {}, "확정 때: "),
+      pre.length ? "저위험 변경 " + pre.length + "개(" + pre.map(titleOf).join(", ") + ")는 절차별 승인도 함께 받습니다 — apply에서는 앞 절차가 끝나면 ▶로 실행만 합니다. " : "함께 사전 승인되는 변경 절차가 없습니다. ",
+      Object.keys(blockers).length ? h("span", {class:"b-warn"}, "개별 승인이 필요한 변경 " + Object.keys(blockers).length + "개: " + Object.entries(blockers).map(([id, why]) => titleOf(id) + "(" + why.map(blockText).join(", ") + ")").join(" · ")) : null));
+  }
+  if (st === "plan_review") acts.push(h("button", {class:"primary", disabled: isReq || scr.dirty, title: isReq ? "요청자는 확정(승인)할 수 없습니다" : scr.dirty ? "연습장의 포함 내용이 요청한 plan과 다릅니다. 먼저 검토를 다시 요청하세요" : "", onclick: () => send({type:"approve_plan", version:v.version, hash:v.plan_hash})}, "확정 (일괄 승인)"),
+    isReq ? h("span", {class:"small muted"}, "요청자가 아닌 확인자가 확정(승인)해야 apply로 갈 수 있습니다.") : null);
+  if (!isReq && ["plan_review", "plan_approved"].includes(st)) acts.push(h("button", {class:"danger", title:"plan을 돌려보내고 코멘트로 수정을 요청합니다. 요청자가 연습장에서 고쳐 다시 검토를 요청합니다", onclick: () => { S.rej = S.rej ? null : {summary:"", steps:{}}; renderCenter(); }}, "반려(수정 요청)"));
+  if (st === "plan_approved") acts.push(h("button", {class:"primary", disabled: scr.dirty, onclick: () => { S.ctab = "apply"; send({type:"start_apply"}); }}, "apply 진행 →"),
+    h("span", {class:"small muted"}, scr.dirty ? "연습장이 바뀌었습니다. 다시 보내면 승인이 풀립니다." : "plan이 승인되었습니다. 진행하면 Apply 탭에서 절차별로 실행합니다."));
+  if (st === "paused") acts.push(h("span", {class:"small muted"}, "일시정지 중입니다. 남은 절차를 고쳐 검토 요청에 포함한 뒤 재계획을 요청하세요(완료된 절차는 잠겨 있습니다)."));
+  if (scr.dirty && v.plan_status !== "superseded") acts.push(h("span", {class:"badge b-warn"}, "연습장이 보낸 plan과 다릅니다 — 다시 보내야 반영됩니다"));
+  if (S.rej && !isReq && ["plan_review", "plan_approved"].includes(st)) kids.push(rejectPanel(v, steps));
+  return h("div", {class:"banner"}, kids, acts.length ? h("div", {class:"row", style:"margin-top:4px"}, acts) : null);
+}
+// 반려: 전체 코멘트(필수)와 절차별 코멘트(선택)를 적어 보낸다. 요청자가 연습장에서 코멘트를 보며 고친다(D-51)
+function rejectPanel(v, steps) {
+  const R = S.rej;
+  const sum = h("textarea", {rows:3, maxlength:500, style:"width:100%", placeholder:"무엇을 어떻게 고쳐야 하는지 적어 주세요(필수). 예) 대상 범위를 줄이고, 확인 절차를 추가해 주세요."}, R.summary);
+  sum.addEventListener("input", () => R.summary = sum.value);
+  const rows = steps.map(s => { const t = h("input", {value:R.steps[s.id] || "", maxlength:300, style:"flex:1;min-width:200px", placeholder:"이 절차에 대한 코멘트(선택)", "data-cmt":s.id});
+    t.addEventListener("input", () => { R.steps[s.id] = t.value; }); return h("div", {class:"row", style:"margin:2px 0"}, h("b", {class:"small"}, s.id), h("span", {class:"small muted stitle"}, s.title || ""), t); });
+  return h("div", {class:"card", style:"margin-top:6px;border:2px solid #dc2626", "data-reject-panel":"1"}, h("b", {}, "반려(수정 요청)"), h("div", {class:"small muted"}, "보낸 코멘트는 요청자의 연습장에 표시됩니다. 요청자가 고쳐 다시 검토를 요청하면 새 plan을 다시 확정할 수 있습니다."),
+    sum, ...rows, h("div", {class:"row", style:"margin-top:6px"}, h("button", {class:"danger", onclick: () => {
+      if (!R.summary.trim()) { toast("반려 이유를 한 줄 이상 적으세요."); return; }
+      const st = Object.fromEntries(Object.entries(R.steps).filter(([k, x]) => (x || "").trim()));
+      ask({type:"reject_plan", version:v.version, hash:v.plan_hash, summary:R.summary, steps:st}, m => { if (!m.ok) toast(codeText(m.code) + (m.message ? " — " + m.message : "")); else { S.rej = null; renderCenter(); } }); }}, "반려 보내기"),
+      h("button", {onclick: () => { S.rej = null; renderCenter(); }}, "취소")));
+}
+
+// 글자를 입력칸으로 바꿔 바로 고친다(Enter·포커스 이탈로 저장, Esc로 취소)
+function renameInline(el, save, cur) {
+  const t = h("input", {value:cur || "", maxlength:120, style:"flex:1;min-width:120px"});
+  let fin = false;
+  const done = ok => { if (fin) return; fin = true; const val = t.value.trim(); if (ok && val && val !== cur) save(val); else renderCenter(); t.blur(); };       // 저장 뒤 포커스를 풀어야 서버의 새 상태가 화면에 반영된다
+  t.addEventListener("click", ev => ev.stopPropagation());
+  t.addEventListener("keydown", ev => { if (ev.isComposing) return; if (ev.key === "Enter") { ev.preventDefault(); done(true); } else if (ev.key === "Escape") done(false); });
+  t.addEventListener("blur", () => done(true));
+  el.replaceChildren(t); t.focus();
+}
+function dphaseView(v, ph, editable) {
+  const pt = h("input", {class:"ptitle", value:ph.title, maxlength:100, disabled: !editable, title:"단계 이름(고친 뒤 Enter 또는 다른 곳을 누르면 저장)", "aria-label":"단계 이름"});
+  const savePt = () => { const t = pt.value.trim(); if (t && t !== ph.title) sc({op:"update_phase", phase:ph.id, fields:{title:t}}); else pt.value = ph.title; };
+  pt.addEventListener("keydown", ev => { if (ev.key === "Enter" && !ev.isComposing) { ev.preventDefault(); savePt(); pt.blur(); } });
+  pt.addEventListener("change", savePt);
+  const kids = [h("div", {class:"head"}, h("h3", {}, ph.id + " · "), pt,
+    h("button", {class:"small", disabled: !editable || ph.gate_locked, title: ph.gate_locked ? "되돌릴 수 없는 절차가 있어 게이트를 끌 수 없습니다" : "", onclick: () => sc({op:"update_phase", phase:ph.id, fields:{gate:!ph.gate}})}, ph.gate ? "게이트 끄기" : "게이트 켜기"),
+    ph.gate ? h("span", {class:"badge b-warn"}, "게이트" + (ph.gate_locked ? " (제거 불가)" : "")) : null,
+    h("button", {class:"small danger", disabled: !editable, onclick: () => { if (confirm("단계 " + ph.id + "와 그 안의 절차를 지울까요?")) sc({op:"delete_phase", phase:ph.id}); }}, "단계 삭제"))];
+  if (ph.rollback) kids.push(h("div", {class:"small"}, "롤백: " + ph.rollback));
+  ph.steps.forEach((s, i) => {
+    kids.push(dstepRow(v, ph, s, i, editable));
+    if (S.sel === s.id) kids.push(dstepDetail(v, ph, s, i, editable));
+    if (S.bld && S.bld.open && S.bld.after === s.id) kids.push(h("div", {class:"small muted", style:"margin:3px 0"}, "↳ ‘명령 만들기’로 만든 절차는 이 줄 바로 뒤에 들어갑니다."));
+  });
+  const end = h("div", {class:"dropend", "data-end":ph.id});
+  end.addEventListener("dragover", ev => { if (S.drag) { ev.preventDefault(); end.classList.add("over"); } });
+  end.addEventListener("dragleave", () => end.classList.remove("over"));
+  end.addEventListener("drop", ev => { ev.preventDefault(); end.classList.remove("over"); dropDraft(ph, null, true); });
+  kids.push(end);
+  return h("div", {class:"phase"}, kids);
+}
+
+// 드래그: 같은 단계 안은 물론 다른 단계로도 옮긴다(`move_step`은 단계와 "바로 앞 절차"를 받는다)
+function dropDraft(ph, target, atEnd) {
+  const d = S.drag; S.drag = null;
+  if (!d || (!atEnd && target.id === d.id)) return;
+  const order = ph.steps.map(x => x.id).filter(id => id !== d.id);
+  const at = atEnd ? order.length : order.indexOf(target.id);
+  if (d.phase === ph.id && ph.steps.map(x => x.id).join() === [...order.slice(0, at), d.id, ...order.slice(at)].join()) return;
+  sc({op:"move_step", step_id:d.id, phase:ph.id, after: at > 0 ? order[at - 1] : null});
+}
+function dstepRow(v, ph, s, idx, editable) {
+  const who = actorOfDraft(s), [glyph, vcls, vtip] = VGLYPH[s.status] || VGLYPH.err, locked = !!s.locked, free = editable && !locked;
+  const issues = (s.issues || []).map(issueText);
+  const row = h("div", {class:"srow s-" + (s.locked === "done" ? "done" : "pending") + (S.sel === s.id ? " sel" : "") + (s.confirmed ? " conf" : ""), draggable: free ? "true" : null, "data-step":s.id,
+      onclick: () => { S.autoOff = S.sel === s.id; S.sel = S.sel === s.id ? null : s.id; renderCenter(); }},
+    free ? h("span", {class:"grip", title:"끌어서 순서·단계 바꾸기"}, "⋮⋮") : null,
+    h("button", {class:"ico " + (s.confirmed ? "ok" : (s.status !== "ok" ? "mute" : "")), "aria-label": s.confirmed ? "검토 요청에서 빼기" : "검토 요청에 포함", disabled: !editable || locked,
+      title: locked ? (s.locked === "done" ? "완료된 절차는 바꿀 수 없습니다" : "apply 진행 중인 절차는 바꿀 수 없습니다") : s.confirmed ? "검토 요청에 포함됨 — 누르면 뺍니다(함께 묶인 절차도 빠짐)" : s.status === "ok" ? "포함하면 [검토 요청]에 들어갑니다(변경·확인 절차는 함께). 확정은 확인자가 합니다" : "아직 포함할 수 없습니다. 눌러서 이유를 보세요: " + issues.join(" / "),
+      onclick: ev => { ev.stopPropagation(); if (!s.confirmed && s.status !== "ok") { S.sel = s.id; S.autoOff = true; toast("검토 요청에 포함하려면 먼저: " + (issues.join(" / ") || "상태 확인")); renderCenter(); return; } askScratch({op:"set_confirmed", step_ids:[s.id], value:!s.confirmed}, m => { const n = (m.confirmed || m.unconfirmed || []).length; if (n > 1) toast((m.confirmed ? "함께 포함: " : "함께 뺌: ") + (m.confirmed || m.unconfirmed).join(", ")); }); }}, s.confirmed ? "☑" : "☐"),
+    h("span", {class:"actor " + who.toLowerCase(), title: who === "AGENT" ? "서버(에이전트)가 실행" : "사람이 직접 실행"}, "[" + who + "]"),
+    h("b", {}, s.id), h("span", {class:"stitle", title: free ? "더블클릭해서 이름 바꾸기" : s.title, ...(free ? {ondblclick: ev => { ev.stopPropagation(); renameInline(ev.currentTarget, v => askScratch({op:"update_step", step_id:s.id, fields:{title:v}}), s.title); }} : {})}, s.title || "(제목 없음)"), s.command ? h("span", {class:"scmd", title:s.command}, s.command) : null,
+    h("span", {class:"ico " + vcls, title: vtip + (issues.length ? ": " + issues.join(" / ") : ""), "aria-label":"검증 " + s.status}, glyph),
+    locked ? h("span", {class:"ico mute", title: s.locked === "done" ? "완료됨(잠금)" : "apply 진행 중(잠금)", "aria-label":"잠금"}, "🔒") : null,
+    h("span", {style:"flex:1"}),
+    (s.uses || []).length ? h("span", {class:"badge b-acc", title:"실행 직전에 서버가 " + s.uses.join(", ") + " 절차의 결과에서 리소스 ID만 꺼내 넣습니다(승인되는 것은 이 템플릿입니다)"}, "↩ 앞 결과 사용") : null,
+    s.op === "mutate" ? h("span", {class:"badge b-bad"}, "변경") : null, s.risk === "high" ? h("span", {class:"badge " + (s.risk === "high" ? "b-bad" : "b-warn")}, lab("risk", s.risk)) : null,
+    s.origin !== "user" ? h("span", {class:"badge " + (s.origin === "auto" ? "b-acc" : "")}, ORIGIN[s.origin]) : null,
+    (s.command || "").startsWith("aws eks") ? h("span", {class:"badge b-warn", title:"이 환경은 aws eks를 거의 쓰지 않습니다. kubectl로 할 수 있는지 확인해 직접 고치세요."}, "aws eks") : null,
+    free ? h("button", {class:"small", title:"이 절차 뒤에 명령 만들기(문서에서 찾기)", onclick: ev => { ev.stopPropagation(); S.bld = {open:true, query:"", results:[], picked:null, vals:{}, opts:{}, extra:"", title:"", chk:"", after:s.id, phase:ph.id, lookups:{}}; renderCenter(); }}, "＋") : null,
+    free ? h("button", {class:"small", title:"이 절차 뒤에 직접 입력", onclick: ev => { ev.stopPropagation(); addBlank(s.id, ph.id); }}, "✎＋") : null);
+  const why = !s.confirmed && s.status !== "ok" && issues.length ? h("div", {class:"small " + (s.status === "err" ? "b-bad" : "b-warn"), style:"margin:2px 0 6px 34px", "data-why":s.id}, "검토 요청에 포함하려면: " + issues.join(" · ")) : null;
+  const cmt = (v.rejection && v.rejection.steps && v.rejection.steps[s.id]) ? h("div", {class:"small", style:"margin:2px 0 6px 34px;color:#b91c1c", "data-comment":s.id}, "💬 " + v.rejection.by + ": " + v.rejection.steps[s.id]) : null;
+  if (free) {
+    row.addEventListener("dragstart", ev => { S.drag = {id:s.id, phase:ph.id}; try { ev.dataTransfer.setData("text/plain", s.id); ev.dataTransfer.effectAllowed = "move"; } catch {} });
+    row.addEventListener("dragover", ev => { if (S.drag) { ev.preventDefault(); row.classList.add("over"); } });
+    row.addEventListener("dragleave", () => row.classList.remove("over"));
+    row.addEventListener("drop", ev => { ev.preventDefault(); row.classList.remove("over"); dropDraft(ph, s, false); });
+    row.addEventListener("dragend", () => { S.drag = null; });
+  } else row.addEventListener("dragover", ev => { if (S.drag) ev.preventDefault(); });
+  return why || cmt ? h("div", {}, row, why, cmt) : row;                                                       // 확정을 막는 이유를 줄 아래에 보인다
+}
+
+function dstepDetail(v, ph, s, idx, editable) {
+  const locked = !!s.locked, free = editable && !locked, who = actorOfDraft(s);
+  const kids = [h("div", {class:"row small"}, h("span", {class:"actor " + who.toLowerCase()}, "[" + who + "]"), h("span", {class:"badge"}, lab("kind", s.kind)), s.op && s.op !== "none" ? h("span", {class:"badge " + (OPCLASS[s.op] || "")}, lab("op", s.op)) : null,
+    s.irreversible ? h("span", {class:"badge b-bad"}, "되돌릴 수 없음") : null, h("span", {class:"badge"}, ORIGIN[s.origin]), s.locked ? h("span", {class:"badge b-man"}, s.locked === "done" ? "완료·잠금" : "apply 진행 중·잠금") : null)];
+  if ((s.issues || []).length) kids.push(h("ul", {class:"small"}, s.issues.map(i => h("li", {class:i.sev === "err" ? "b-bad" : "b-warn", style:"list-style:'" + (i.sev === "err" ? "⛔ " : "⚠ ") + "'"}, issueText(i)))));
+  if ((s.issues || []).some(i => i.code === "missing_check") && free) kids.push(h("div", {class:"row small"}, h("button", {class:"small", onclick: () => { S.bld = {open:true, query:"", results:[], picked:null, vals:{}, opts:{}, extra:"", title:"", chk:"", after:s.id, phase:ph.id, checkFor:s.id, lookups:{}}; renderCenter(); }}, "이 변경의 확인(읽기) 절차 만들기"), h("span", {class:"muted"}, "예) describe-… 명령. 만들면 이 절차 바로 뒤에 들어갑니다.")));
+  if (s.flags && s.flags.length) kids.push(h("div", {class:"small"}, "위험 표시: ", s.flags.map(f => h("span", {class:"badge b-warn"}, lab("flag", f)))));
+  if (s.requires && s.requires.length) kids.push(h("div", {class:"small muted"}, "Apply에서 필요한 조치: " + s.requires.map(r => lab("req", r)).join(" / ")));
+  const title = h("input", {value:s.title, maxlength:120, style:"width:100%", disabled: !free}), cmd = s.kind === "iac" || (s.kind === "check" && !s.command) ? null : h("input", {value:s.command || "", style:"width:100%", disabled: !free, placeholder:"aws 또는 kubectl 명령"}),
+    why = h("input", {value:s.rationale || "", maxlength:200, style:"width:100%", disabled: !free, placeholder:"이유(선택)"});
+  const dep = h("input", {value:(s.depends_on || []).join(", "), style:"width:100%", disabled: !free, placeholder:"먼저 끝나야 하는 절차 id(쉼표로 구분)"});
+  const chk = h("input", {value:s.check_for || "", style:"width:100%", disabled: !free, placeholder:"이 절차가 확인하는 변경 절차 id(확인 절차일 때)"});
+  const lines = (s.kind === "iac" || s.kind === "check") ? h("textarea", {style:"min-height:46px", disabled: !free, placeholder:"체크리스트(한 줄에 하나)"}, (s.checklist || []).join("\n")) : null;
+  const refs = cmd && free ? refChoices(v, s.id) : [];
+  if (refs.length) kids.push(h("div", {class:"row small"}, h("span", {class:"muted"}, "앞 절차 결과 쓰기"),
+    h("select", {title:"앞에서 만드는 리소스의 ID를 이 명령에 넣습니다. 실행 때 서버가 결과에서 ID만 꺼내 바꿉니다", onchange: ev => { const val = ev.target.value; if (!val) return;
+      const a = cmd.selectionStart == null ? cmd.value.length : cmd.selectionStart; cmd.value = (cmd.value.slice(0, a) + (a && !/\s$/.test(cmd.value.slice(0, a)) ? " " : "") + val + cmd.value.slice(a)).trim(); ev.target.value = ""; }},
+      h("option", {value:""}, "고르기…"), ...refs.map(r => h("option", {value:r.value}, r.label))), h("span", {class:"muted"}, "고른 뒤 ‘수정 저장’")));
+  const missing = (s.issues || []).filter(i => i.code === "missing_param").map(i => i.detail);
+  if (missing.length && cmd && free) kids.push(h("div", {class:"small"}, h("div", {class:"muted"}, "빠진 필수 옵션 — 값을 고르면 명령 끝에 붙습니다(‘수정 저장’으로 반영)"),
+    ...missing.map(o => { const key = s.id + o, items = (S.dlk || (S.dlk = {}))[key] || [];
+      const add = val => { cmd.value = (cmd.value.trim() + " " + o + " " + val).trim(); };
+      const val = h("input", {placeholder:o + " 값", style:"flex:1;min-width:140px"});
+      const all = [...refChoices(v, s.id), ...items];
+      const sel = all.length ? h("select", {onchange: ev => { if (ev.target.value) add(ev.target.value); }}, h("option", {value:""}, "값 고르기…"), ...all.map(x => h("option", {value:x.value}, x.label))) : null;
+      const looks = (LOOKUP_OPTIONS[o] || []).map(([kind, label]) => h("button", {class:"small", onclick: () => ask({type:"lookup", kind, vpc:""}, m => { if (!m.ok) { toast(codeText(m.code)); return; } S.dlk[key] = m.items; renderCenter(); })}, label));
+      if (NAMED_OPTIONS.includes(o)) looks.push(h("button", {class:"small", onclick: () => ask({type:"suggest", option:o}, m => { S.dlk[key] = (m.names || []).map(n => ({value:n, label:n})); renderCenter(); })}, "이름 목록"));
+      return h("div", {class:"row", style:"margin:3px 0"}, h("span", {class:"badge b-warn"}, o), val, h("button", {class:"small", onclick: () => { if (val.value.trim()) { add(val.value.trim()); val.value = ""; } }}, "붙이기"), ...looks, sel); })));
+  const ksel = h("select", {disabled: !free, title:"절차 종류(바꾸면 검토 요청 포함이 풀립니다)", onchange: ev => { if (ev.target.value !== s.kind) askScratch({op:"update_step", step_id:s.id, fields:{kind:ev.target.value}}); }},
+    ...[["cli", "CLI 명령(서버 실행)"], ["manual", "수동 명령(사람 실행)"], ["iac", "IaC 코드 변경(사람)"], ["check", "수동 확인·읽기 확인"]].map(([k, t]) => h("option", {value:k, ...(k === s.kind ? {selected:true} : {})}, t)));
+  const phsel = h("select", {disabled: !free}, v.scratch.phases.map(p => h("option", {value:p.id, ...(p.id === ph.id ? {selected:true} : {})}, p.id + " · " + p.title)));
+  kids.push(h("div", {class:"small muted"}, "종류"), ksel, h("div", {class:"small muted"}, "제목"), title, cmd ? h("div", {class:"small muted"}, "명령(실제 값을 써도 자동으로 가려집니다)") : null, cmd, h("div", {class:"small muted"}, "이유"), why,
+    h("div", {class:"small muted"}, "의존 · 확인 대상"), dep, chk, lines ? h("div", {class:"small muted"}, "체크리스트") : null, lines,
+    h("div", {class:"row", style:"margin-top:5px"},
+      h("button", {class:"primary", disabled: !free, onclick: () => { const f = {title:title.value, rationale:why.value, depends_on:dep.value.split(",").map(x => x.trim()).filter(Boolean), check_for:chk.value.trim() || null}; if (cmd) f.command = cmd.value; if (lines) f.checklist = lines.value.split("\n").map(x => x.trim()).filter(Boolean); askScratch({op:"update_step", step_id:s.id, fields:f}, m => { if ((m.unconfirmed || []).length) toast("내용이 바뀌어 확정이 풀렸습니다: " + m.unconfirmed.join(", ")); }); }}, "수정 저장"),
+      phsel, h("button", {disabled: !free, onclick: () => sc({op:"move_step", step_id:s.id, phase:phsel.value, after:null}), title:"선택한 단계의 맨 앞으로"}, "단계로 이동"),
+      h("button", {disabled: !editable, onclick: () => sc({op:"duplicate_step", step_id:s.id})}, "복제"),
+      h("button", {class:"danger", disabled: !free, onclick: () => { if (confirm(s.id + " 절차를 삭제할까요?" + (s.origin !== "user" ? " (제안·서버 추가 절차도 지울 수 있고 다시 끼워 넣지 않습니다)" : ""))) { S.sel = null; sc({op:"delete_step", step_id:s.id}); } }}, "삭제")));
+  const outs = (v.outputs || []).filter(o => o.step_id === s.id && String(o.status).startsWith("preview") && o.text);
+  if (outs.length) kids.push(h("details", {}, h("summary", {class:"small"}, "읽기 결과 미리보기"), h("pre", {}, outs[outs.length - 1].text)));
+  return h("div", {class:"detail"}, kids);
+}
+
+// ---- 명령 만들기 도우미: 문서에서 명령을 찾고, 필수·선택 옵션을 입력칸으로 채운다 ----
+function builderPanel(v) {
+  const B = S.bld, kids = [h("div", {class:"row", style:"justify-content:space-between"}, h("b", {}, "명령 만들기"), h("button", {class:"small", onclick: () => { S.bld = null; renderCenter(); }}, "닫기"))];
+  const q = h("input", {placeholder:"무엇을 하고 싶나요? 예) 인스턴스 생성, 보안 그룹 포트 열기, 노드 drain", value:B.query, style:"flex:1;min-width:220px"});
+  q.addEventListener("input", () => B.query = q.value);
+  const search = () => ask({type:"catalog_search", query:q.value}, m => { if (!m.ok) { toast(codeText(m.code)); return; } B.results = m.items; B.picked = null; renderCenter(); });
+  q.addEventListener("keydown", ev => { if (ev.key === "Enter" && !ev.isComposing) { ev.preventDefault(); search(); } });
+  kids.push(h("div", {class:"row"}, q, h("button", {class:"primary", onclick: search}, "문서에서 찾기")));
+  if (B.results.length && !B.picked) kids.push(h("div", {style:"margin-top:5px"}, B.results.map(r => h("div", {class:"srow", onclick: () => { B.picked = r; B.vals = {}; B.opts = {}; B.title = r.command; renderCenter(); }},
+    h("b", {}, r.command), h("span", {class:"badge " + (r.kind === "read" ? "b-ok" : r.kind === "mutate" ? "b-bad" : "b-man")}, lab("op", r.kind)), r.risk !== "low" ? h("span", {class:"badge b-warn"}, lab("risk", r.risk)) : null,
+    h("span", {class:"stitle small muted"}, r.topic), r.required.length ? h("span", {class:"small muted"}, "필수 " + r.required.join(" ")) : null))));
+  const p = B.picked;
+  if (p) {
+    const val = (o, extra) => { const t = h("input", {placeholder: o, value:B.vals[o] || "", style:"flex:1;min-width:160px", list:"dl-" + o}); t.addEventListener("input", () => { B.vals[o] = t.value; renderPreview(); }); return t; };
+    const opts = [...p.required.map(o => [o, true]), ...p.optional.map(o => [o, false])];
+    const rows = opts.map(([o, req]) => {
+      const inp = h("input", {placeholder: req ? o + " (필수)" : o + " (선택)", value:B.vals[o] || "", style:"flex:1;min-width:150px"});
+      inp.addEventListener("input", () => { B.vals[o] = inp.value; if (!req) B.opts[o] = true; renderPreview(); });
+      const extras = [];
+      if (NAMED_OPTIONS.includes(o)) extras.push(h("button", {class:"small", onclick: () => ask({type:"suggest", option:o}, m => { B.lookups[o] = (m.names || []).map(n => ({value:n, label:n})); renderCenter(); })}, "이름 목록"));
+      for (const [kind, label] of (LOOKUP_OPTIONS[o] || [])) extras.push(h("button", {class:"small", onclick: () => ask({type:"lookup", kind, vpc: B.vals["--vpc-id"] || ""}, m => { if (!m.ok) { toast(codeText(m.code)); return; } B.lookups[o] = m.items; renderCenter(); })}, label));
+      const picks = [...refChoices(v, B.after), ...(B.lookups[o] || [])];
+      const pick = picks.length ? h("select", {onchange: ev => { if (ev.target.value) { B.vals[o] = ev.target.value; if (!req) B.opts[o] = true; renderCenter(); } }},
+        h("option", {value:""}, "값 고르기…"), ...picks.map(x => h("option", {value:x.value}, x.label))) : null;
+      return h("div", {class:"row", style:"margin:3px 0"}, req ? h("span", {class:"badge b-bad"}, "필수") : h("span", {class:"badge"}, "선택"), inp, ...extras, pick);
+    });
+    const extra = h("input", {placeholder:"그 밖의 인자(위치 인자·옵션을 그대로. 예: node-1 --ignore-daemonsets)", value:B.extra, style:"width:100%"});
+    extra.addEventListener("input", () => { B.extra = extra.value; renderPreview(); });
+    const title = h("input", {placeholder:"절차 제목", value:B.title, style:"width:100%", maxlength:120}); title.addEventListener("input", () => B.title = title.value);
+    const chk = h("input", {placeholder:"확인(읽기) 명령 — 변경 명령이면 함께 만듭니다. 예) aws ec2 describe-instances", value:B.chk, style:"width:100%"}); chk.addEventListener("input", () => B.chk = chk.value);
+    const preview = h("pre", {});
+    const renderPreview = () => { preview.replaceChildren(buildCommand(p, B)); };
+    renderPreview();
+    kids.push(h("div", {class:"detail", style:"border-radius:6px;margin-top:5px"}, h("div", {class:"row"}, h("b", {}, p.command), h("span", {class:"badge " + (p.kind === "read" ? "b-ok" : p.kind === "mutate" ? "b-bad" : "b-man")}, lab("op", p.kind)),
+        h("button", {class:"small", onclick: () => { B.picked = null; renderCenter(); }}, "다른 명령 고르기")),
+      p.example ? h("div", {class:"small muted"}, "예: " + p.example) : null, ...rows, extra, h("div", {class:"small muted"}, "미리보기"), preview, title,
+      p.kind === "mutate" ? chk : null,
+      h("div", {class:"row", style:"margin-top:5px"}, h("button", {class:"primary", onclick: () => {
+        const cmdText = buildCommand(p, B), id = "s" + Date.now().toString(36), steps = [{id, kind: p.kind === "manual" ? "manual" : "cli", title:B.title || p.command, command:cmdText}];
+        if (B.checkFor) steps[0].check_for = B.checkFor;
+        if (p.kind === "mutate" && B.chk.trim()) steps.push({id:id + "-chk", kind:"cli", title:"확인: " + (B.title || p.command), command:B.chk.trim(), check_for:id});
+        askScratch({op:"add_steps", steps, ...(B.after ? {after:B.after} : B.phase ? {phase:B.phase} : {})}, () => { S.bld = null; toast("초안에 추가했습니다. 상태를 확인하고 검토 요청에 포함하세요."); });
+      }}, "초안에 추가"), h("span", {class:"small muted"}, p.required.length ? "필수 옵션이 비어 있어도 초안으로 저장됩니다(⚠로 표시)." : ""))));
+  }
+  return h("div", {class:"card", style:"background:var(--code)"}, kids);
+}
+function buildCommand(p, B) {
+  const parts = [p.command];
+  for (const o of p.required) if ((B.vals[o] || "").trim()) parts.push(o, B.vals[o].trim());
+  for (const o of p.optional) if (B.opts[o] || (B.vals[o] || "").trim()) parts.push(o, ...((B.vals[o] || "").trim() ? [B.vals[o].trim()] : []));
+  if ((B.extra || "").trim()) parts.push(B.extra.trim());
+  return parts.join(" ");
 }
 
 // ---- Apply 탭: 같은 절차를 수정 없이 승인·확인·실행 ----
@@ -397,8 +702,9 @@ function applyView(v) {
     h("span", {class:"small muted"}, "plan v" + v.version + " 승인본 · 수정 불가 · 해시 " + v.plan_hash.slice(0, 12)))];
   const acts = sessionButtons(v);
   if (acts.length) kids.push(h("div", {class:"row", style:"margin:4px 0 6px"}, acts));
+  if (v.session.state === "applying") kids.push(todoPanel(v));
   kids.push(h("div", {class:"small muted"}, "변경 절차는 요청자가 아닌 사람의 승인 후 실행하고, 읽기(조회·사전 점검) 절차는 ‘확인’ 한 번으로 진행합니다. 실행하면 확인 절차가 자동으로 이어집니다."), legend());
-  for (const ph of plan.phases) kids.push(phaseView(v, ph, "apply", false));
+  for (const ph of plan.phases) kids.push(phaseView(v, ph, "apply"));
   kids.push(terminalPanel(v));
   return h("div", {class:"card"}, kids);
 }
@@ -427,11 +733,11 @@ function sessionButtons(v) {
   return out;
 }
 
-function phaseView(v, ph, mode, editable) {
+function phaseView(v, ph, mode) {
   const gateApproved = v.approvals.some(a => a.kind === "gate" && a.target === ph.id);
   const kids = [h("div", {class:"head"}, h("h3", {}, ph.id + " · " + ph.title),
-    ph.gate ? h("span", {class:"badge b-warn"}, "게이트" + (ph.gate_locked ? " (제거 불가: 되돌릴 수 없는 step 포함)" : "")) : null, ph.gate && gateApproved ? h("span", {class:"badge b-ok"}, "게이트 승인됨") : null,
-    editable ? h("button", {class:"small", disabled: ph.gate_locked, title: ph.gate_locked ? "제거할 수 없습니다" : "", onclick: () => send({type:"edit", op:"set_gate", phase:ph.id, gate:!ph.gate})}, ph.gate ? "게이트 끄기" : "게이트 켜기") : null)];
+    ph.gate ? h("span", {class:"badge b-warn"}, "게이트" + (ph.gate_locked ? " (제거 불가: 되돌릴 수 없는 step 포함)" : "")) : null, ph.gate && gateApproved ? h("span", {class:"badge b-ok"}, "게이트 승인됨") : null)];
+
   if (ph.purpose) kids.push(h("div", {class:"small muted"}, ph.purpose));
   if (ph.preconditions.length) kids.push(h("div", {class:"small"}, "사전 조건: " + ph.preconditions.join(" / ")));
   if (ph.rollback) kids.push(h("div", {class:"small"}, "롤백: " + ph.rollback));
@@ -440,38 +746,74 @@ function phaseView(v, ph, mode, editable) {
       onclick: () => send({type:"approve_gate", version:v.version, phase:ph.id})}, "게이트 승인"), h("span", {class:"small muted"}, ph.gate_reason || "앞 phase 결과를 확인하고 진행을 승인합니다.")));
   }
   ph.steps.forEach((s, i) => {
-    kids.push(stepRow(v, ph, s, i, editable, mode));
-    if (S.sel === s.id) kids.push(stepDetail(v, ph, s, i, editable, mode));
-    if (editable && S.addAt && S.addAt.phase === ph.id && S.addAt.after === s.id) kids.push(addStepForm(v, ph, s.id));       // 이 절차 뒤에 끼워 넣기
+    kids.push(stepRow(v, ph, s, i, mode));
+    if (S.sel === s.id) kids.push(stepDetail(v, ph, s, i, mode));
   });
-  if (editable) {
-    const end = h("div", {class:"dropend", "data-end":ph.id});
-    end.addEventListener("dragover", ev => { if (S.drag && S.drag.phase === ph.id) { ev.preventDefault(); end.classList.add("over"); } });
-    end.addEventListener("dragleave", () => end.classList.remove("over"));
-    end.addEventListener("drop", ev => { ev.preventDefault(); end.classList.remove("over"); dropStep(ph, null, true); });
-    kids.push(end, S.addAt && S.addAt.phase === ph.id && S.addAt.after === null ? addStepForm(v, ph, null) : h("button", {class:"small", onclick: () => { S.addAt = {phase:ph.id, after:null}; renderCenter(); }}, "＋ 절차 추가(맨 끝)"));
-  }
   return h("div", {class:"phase"}, kids);
 }
 
-// 드래그: 같은 phase 안에서 대상 행 앞으로 옮긴다(서버의 move_step은 "after"를 받는다)
-function dropStep(ph, target, atEnd) {
-  const d = S.drag; S.drag = null;
-  if (!d) return;
-  if (d.phase !== ph.id) { toast("다른 phase로는 옮길 수 없습니다. 같은 phase 안에서만 순서를 바꿀 수 있습니다."); return; }
-  if (!atEnd && target.id === d.id) return;
-  const order = ph.steps.map(x => x.id).filter(id => id !== d.id);
-  const at = atEnd ? order.length : order.indexOf(target.id);
-  const next = [...order.slice(0, at), d.id, ...order.slice(at)];
-  if (ph.steps.map(x => x.id).join() === next.join()) return;
-  send({type:"edit", op:"move_step", step_id:d.id, after: at > 0 ? order[at - 1] : null});
-}
 const GLYPH = {pending:"○", approved:"☑", running:"⟳", awaiting_report:"✎", awaiting_confirm:"⏳", done:"✔", failed:"✖", skipped:"↷", aborted:"⊘"};
 function stateIcon(cls, glyph, label) { return h("span", {class:"ico " + cls, title:label, "aria-label":label}, glyph); }
 function iconBtn(cls, glyph, label, fn, disabled, title) {
   return h("button", {class:"ico " + cls, "aria-label":label, title: title || label, disabled, onclick: ev => { ev.stopPropagation(); fn(); }}, glyph);
 }
 // 승인은 체크박스 아이콘(☐→☑), 실행은 액션 아이콘(▶→✔). 읽기 절차는 승인 없이 ▶ 하나로 확인·실행한다. 누르면 진행 중(⟳)을 거쳐 실행됨(✔)으로 바뀐다.
+const BLOCK_KO = {not_grounded:"문서 근거 없음(AI 추정)", high_risk:"위험 높음", irreversible:"되돌릴 수 없음", disruption_likely:"중단 가능성 높음", disruption_possible:"중단 가능성 있음", disruption_unknown:"영향 불명", replaces:"교체 포함",
+  needs_confirmation:"추가 확인 필요", not_server_change:"서버가 실행하는 변경이 아님"};
+const blockText = c => c.startsWith("flag:") ? lab("flag", c.slice(5)) : (BLOCK_KO[c] || c);
+// ---- 누가 무엇을 해야 하는가(안내용. 실제 거부·허용은 서버가 한다) ----
+const OWNER_KO = {requester:"요청자", approver:"요청자가 아닌 확인자", anyone:"누구나"};
+function stepTodo(v, s, state) {
+  const isReq = v.you.role === "requester", items = [];
+  if (v.session.state !== "applying" || ["done", "skipped", "aborted"].includes(state)) return items;
+  const add = (owner, text, req) => items.push({owner, text, req:req || "", mine: owner === "anyone" || (owner === "requester") === isReq});
+  const pend = (v.pending_requirements || {})[s.id] || [];
+  const reasonGiven = (v.approvals || []).some(a => a.kind === "confirm" && a.target === s.id + ":open_cidr_reason");
+  if (state === "pending") {
+    const dependsOk = (s.depends_on || []).every(d => ((v.steps[d] || {}).state) === "done");
+    if ((v.preapproved || []).includes(s.id) && dependsOk) { items.push({owner:"none", text:"사전 승인됨 — 곧 ▶ 실행할 수 있습니다", req:"", mine:false}); return items; }
+    if (!dependsOk && (v.preapproved || []).includes(s.id)) { items.push({owner:"none", text:"사전 승인됨 — 앞 절차가 끝나면 ▶ 실행할 수 있습니다", req:"", mine:false}); return items; }
+    if (!dependsOk) { items.push({owner:"none", text:"앞 절차가 끝나면 진행합니다", req:"", mine:false}); return items; }      // 앞 절차가 끝나기 전에는 아직 할 일이 아니다
+    if (confirmable(s)) { add("anyone", "‘확인(실행)’ 버튼을 누르세요"); return items; }
+    if (!(s.op === "mutate" || (s.op === "read" && !s.grounded) || s.op === "manual" || s.op === "none")) return items;
+    for (const r of s.requires || []) {
+      if (r === "fallback_approval") continue;
+      const done = !pend.includes(r);
+      if (r === "open_cidr_confirm") { if (!reasonGiven) add("requester", "전체 개방 사유를 입력", r); if (!done || !reasonGiven) add("approver", "전체 개방을 확인(사유를 본 뒤)", r); }
+      else if (r === "dry_run_first") { if (!done) add("anyone", "같은 명령의 dry-run 절차를 먼저 실행", r); }
+      else if (!done) add("approver", lab("req", r).split(":")[0] + " 확인", r);
+    }
+    add("approver", "절차 승인(☐)");
+  } else if (state === "approved") add("anyone", "실행(▶)");
+  else if (state === "awaiting_report") add("requester", "실행한 뒤 ‘실행 완료’를 보고");
+  else if (state === "awaiting_confirm") add("approver", "보고를 확인");
+  else if (state === "failed") add("anyone", "재시도·건너뛰기·중단 중에서 고르기");
+  return items;
+}
+function todoChip(v, s, state) {
+  const items = stepTodo(v, s, state);
+  if (!items.length) return null;
+  const mine = items.find(i => i.mine), other = items.find(i => !i.mine);
+  if (!mine && other.owner === "none") return h("span", {class:"badge todo", title:"앞 절차가 끝나기를 기다립니다", "data-todo":"blocked"}, "… " + other.text);
+  if (mine) return h("span", {class:"badge b-ok todo", title:"지금 내가 할 일입니다. 줄을 펼쳐 확인하세요", "data-todo":"mine"}, "▶ 내 차례: " + mine.text);
+  return h("span", {class:"badge b-warn todo", title:"상대가 할 일입니다(" + OWNER_KO[other.owner] + ")", "data-todo":"other"}, "⏳ " + OWNER_KO[other.owner] + " 차례: " + other.text);
+}
+// Apply 탭 맨 위: 지금 내가 할 일과 상대가 할 일을 한눈에
+function todoPanel(v) {
+  const mine = [], other = [];
+  for (const ph of v.plan.phases) for (const s of ph.steps) {
+    const items = stepTodo(v, s, (v.steps[s.id] || {}).state || "pending");
+    const m = items.find(i => i.mine), o = items.find(i => !i.mine && i.owner !== "none");
+    if (m) mine.push({s, i:m});
+    if (o) other.push({s, i:o});                                                                          // 같은 절차에 내 일과 상대 일이 함께 있을 수 있다
+  }
+  const line = (x, cls) => h("div", {class:"todo-line " + cls, onclick: () => { S.sel = x.s.id; S.autoOff = true; renderCenter(); }, title:"눌러서 이 절차를 펼칩니다"},
+    h("b", {}, x.s.id + " "), (x.s.title || "") + " — ", h("span", {}, x.i.mine ? x.i.text : OWNER_KO[x.i.owner] + ": " + x.i.text));
+  const box = (title, list, cls, empty) => h("div", {class:"todo-box " + cls}, h("div", {class:"todo-h"}, title + " (" + list.length + ")"), ...(list.length ? list.slice(0, 6).map(x => line(x, cls)) : [h("div", {class:"small muted"}, empty)]),
+    list.length > 6 ? h("div", {class:"small muted"}, "… 외 " + (list.length - 6) + "건") : null);
+  return h("div", {class:"todo-panel", "data-todo-panel":"1"}, box("▶ 내가 지금 할 일", mine, "mine", "지금 내가 할 일은 없습니다."),
+    box("⏳ 상대가 할 일", other, "other", "상대가 기다리는 일은 없습니다."));
+}
 function stepIcons(v, ph, s, state, mode) {
   const live = v.session.state === "applying", isReq = v.you.role === "requester", pend = (v.pending_requirements || {})[s.id] || [];
   const needsOther = s.op === "mutate" || (s.op === "read" && !s.grounded), base = {version:v.version, step:s.id};
@@ -488,36 +830,29 @@ function stepIcons(v, ph, s, state, mode) {
   const why = !live ? "apply 진행 중에만 할 수 있습니다" : "";
   if (state === "pending" && confirmable(s)) return [iconBtn("act", "▶", "확인(실행)", () => go({type:"run_read", hash:v.plan_hash}), !live, why || "읽기 절차: 승인 없이 확인하면 바로 실행합니다")];
   const lockReq = needsOther && isReq ? "변경·AI 추정 절차는 요청자가 아닌 사람이 승인합니다" : (pend.length ? "필요한 조치를 먼저 끝내세요(펼쳐서 확인)" : "");
-  const out = [state === "approved" ? stateIcon("ok", GLYPH.approved, "승인됨") :
+  const pre = state === "pending" && (v.preapproved || []).includes(s.id);
+  const out = [state === "approved" || pre ? stateIcon("ok", GLYPH.approved, pre ? "사전 승인됨(plan 확정과 함께)" : "승인됨") :
     iconBtn("", "☐", "승인", () => go({type:"approve_step", hash:v.plan_hash}), !live || !!lockReq, why || lockReq || "승인")];
   if (s.op === "manual" || s.op === "none") return out;                          // 사람이 실행하는 절차는 승인 뒤 보고·확인으로 이어진다
   out.push(iconBtn("act", "▶", s.kind === "poll" ? "폴링 시작" : "실행", s.kind === "poll" ? () => go({type:"start_poll"}) : () => go({type:"run_step"}),
-    !live || state !== "approved", state !== "approved" ? "승인 뒤에 실행할 수 있습니다" : (s.kind === "poll" ? "폴링 시작" : "실행")));
+    !live || state !== "approved", state !== "approved" ? (pre ? "사전 승인됨 — 앞 절차가 끝나면 실행할 수 있습니다" : "승인 뒤에 실행할 수 있습니다") : (s.kind === "poll" ? "폴링 시작" : "실행")));
   return out;
 }
-function stepRow(v, ph, s, idx, editable, mode) {
+function stepRow(v, ph, s, idx, mode) {
   const state = (v.steps[s.id] || {}).state || "pending", who = actorOf(s);
-  const row = h("div", {class:"srow s-" + state + (S.sel === s.id ? " sel" : ""), draggable: editable ? "true" : null, "data-step":s.id, onclick: () => { S.autoOff = S.sel === s.id; S.sel = S.sel === s.id ? null : s.id; renderCenter(); }},
-    editable ? h("span", {class:"grip", title:"끌어서 순서 바꾸기"}, "⋮⋮") : null,
+  const row = h("div", {class:"srow s-" + state + (S.sel === s.id ? " sel" : ""), "data-step":s.id, onclick: () => { S.autoOff = S.sel === s.id; S.sel = S.sel === s.id ? null : s.id; renderCenter(); }},
     h("span", {class:"actor " + who.toLowerCase(), title: who === "AGENT" ? "서버(에이전트)가 실행" : "사람이 직접 실행"}, "[" + who + "]"),
     h("b", {}, s.id), h("span", {class:"stitle", title:s.title}, s.title),
     h("span", {class:"icos"}, ...stepIcons(v, ph, s, state, mode)),
+    mode === "apply" ? todoChip(v, s, state) : null,
     h("span", {style:"flex:1"}),
-    s.op === "mutate" ? h("span", {class:"badge b-bad"}, "변경") : null, s.risk !== "low" ? h("span", {class:"badge " + (s.risk === "high" ? "b-bad" : "b-warn")}, lab("risk", s.risk)) : null,
+    s.op === "mutate" ? h("span", {class:"badge b-bad"}, "변경") : null, (v.preapproved || []).includes(s.id) ? h("span", {class:"badge b-ok", title:"확인자가 plan을 확정(일괄 승인)할 때 이 저위험 변경 절차의 승인도 함께 했습니다. 앞 절차가 끝나면 ▶로 실행합니다"}, "사전 승인") : null, s.risk === "high" ? h("span", {class:"badge " + (s.risk === "high" ? "b-bad" : "b-warn")}, lab("risk", s.risk)) : null,
     s.op !== "none" && s.op !== "manual" && !s.grounded ? h("span", {class:"badge b-bad"}, "AI 추정") : null, s.auto ? h("span", {class:"badge b-acc"}, "서버 추가") : null,
-    (s.command || "").startsWith("aws eks") ? h("span", {class:"badge b-warn", title:"이 환경은 aws eks를 거의 쓰지 않습니다. kubectl로 확인할 수 있는지 검토하고, 고치거나 지울 수 있습니다."}, "aws eks") : null,
-    editable ? h("button", {class:"small", title:"이 절차 뒤에 절차 끼워 넣기", onclick: ev => { ev.stopPropagation(); S.addAt = {phase:ph.id, after:s.id}; renderCenter(); }}, "＋") : null);
-  if (editable) {
-    row.addEventListener("dragstart", ev => { S.drag = {id:s.id, phase:ph.id}; try { ev.dataTransfer.setData("text/plain", s.id); ev.dataTransfer.effectAllowed = "move"; } catch {} });
-    row.addEventListener("dragover", ev => { if (S.drag && S.drag.phase === ph.id) { ev.preventDefault(); row.classList.add("over"); } });
-    row.addEventListener("dragleave", () => row.classList.remove("over"));
-    row.addEventListener("drop", ev => { ev.preventDefault(); row.classList.remove("over"); dropStep(ph, s, false); });
-    row.addEventListener("dragend", () => { S.drag = null; });
-  }
+    (s.command || "").startsWith("aws eks") ? h("span", {class:"badge b-warn", title:"이 환경은 aws eks를 거의 쓰지 않습니다. kubectl로 확인할 수 있는지 검토하고, 고치거나 지울 수 있습니다."}, "aws eks") : null);
   return row;
 }
 
-function stepDetail(v, ph, s, idx, editable, mode) {
+function stepDetail(v, ph, s, idx, mode) {
   const state = (v.steps[s.id] || {}).state || "pending", attempts = (v.steps[s.id] || {}).attempts || 0, ev = (v.evidence || {})[s.id];
   const you = v.you, isReq = you.role === "requester", sess = v.session.state, who = actorOf(s);
   const kids = [h("div", {class:"row small"}, h("span", {class:"actor " + who.toLowerCase()}, "[" + who + "]"), h("span", {class:"badge"}, lab("kind", s.kind)), h("span", {class:"badge " + (OPCLASS[s.op] || "")}, lab("op", s.op)),
@@ -537,44 +872,22 @@ function stepDetail(v, ph, s, idx, editable, mode) {
   kids.push(h("details", {}, h("summary", {class:"small"}, ev && ev.grounded ? "근거 문서 보기" : "근거"),
     ev && ev.grounded ? h("pre", {}, ev.text || "") : h("div", {class:"small"}, s.op === "none" ? "실행하지 않는 step입니다." : "문서에 근거가 없는 AI 추정 명령입니다. 다른 사람의 승인이 필요합니다.")));
   const pend = (v.pending_requirements || {})[s.id] || [];
-  if (s.requires.length) kids.push(h("div", {class:"small"}, "필요한 조치: ", s.requires.map(r => h("div", {}, (pend.includes(r) ? "☐ " : "☑ ") + lab("req", r)))));
+  if (s.requires.length) {
+    const todo = state === "pending" && v.session.state === "applying" ? stepTodo(v, s, state) : [];
+    kids.push(h("div", {class:"small"}, h("b", {}, "필요한 조치 — 누가 무엇을 하는지"), ...s.requires.filter(r => r !== "fallback_approval").map(r => {
+      const done = !pend.includes(r) && !(r === "open_cidr_confirm" && todo.some(t => t.req === r));
+      const mine = todo.filter(t => t.req === r);
+      return h("div", {class:"req-line " + (done ? "done" : mine.some(t => t.mine) ? "mine" : "other"), "data-req":r}, (done ? "☑ 완료 · " : "☐ ") + lab("req", r),
+        done ? null : h("div", {class:"small"}, ...mine.map(t => h("div", {}, (t.mine ? "▶ 내가 할 일: " : "⏳ " + OWNER_KO[t.owner] + "의 일: ") + t.text))));
+    })));
+  }
   const outs = (v.outputs || []).filter(o => o.step_id === s.id && o.text);
   if (outs.length) { const o = outs[outs.length - 1]; kids.push(h("details", {}, h("summary", {class:"small"}, "결과 (" + o.status + (o.exit_code !== null && o.exit_code !== undefined ? ", exit " + o.exit_code : "") + ")"), h("pre", {}, o.text))); }
   const acts = actionsFor(v, ph, s, state, pend, isReq, sess, mode);
   if (acts.length) kids.push(h("div", {class:"row", style:"margin-top:5px"}, acts));
   if (state === "failed" && mode === "apply") kids.push(failureView(v, s));
-  if (editable) kids.push(editForm(v, ph, s, idx));
   return h("div", {class:"detail"}, kids);
 }
-function editForm(v, ph, s, idx) {
-  const locked = ["done", "skipped"].includes((v.steps[s.id] || {}).state);
-  const title = h("input", {value:s.title, maxlength:120, style:"width:100%", disabled: locked}), cmd = s.command !== null && s.command !== undefined ? h("input", {value:s.command, style:"width:100%", disabled: locked}) : null,
-    why = h("input", {value:s.rationale || "", maxlength:200, style:"width:100%", disabled: locked, placeholder:"이유(선택)"});
-  return h("details", {style:"margin-top:6px"}, h("summary", {class:"small"}, "이 절차 수정"),
-    locked ? h("div", {class:"small muted"}, "완료된 절차는 바꿀 수 없습니다.") : null,
-    h("div", {class:"small muted"}, "제목"), title, cmd ? h("div", {class:"small muted"}, "명령(실제 값을 써도 자동으로 가려집니다. 서버의 명령 가드를 다시 통과해야 합니다)") : null, cmd, h("div", {class:"small muted"}, "이유"), why,
-    h("div", {class:"row", style:"margin-top:5px"},
-      h("button", {class:"primary", disabled: locked, onclick: () => { const f = {title:title.value, rationale:why.value}; if (cmd) f.command = cmd.value; send({type:"edit", op:"update_step", step_id:s.id, fields:f}); }}, "수정 저장"),
-      h("button", {disabled: idx === 0 || locked, onclick: () => send({type:"edit", op:"move_step", step_id:s.id, after: idx >= 2 ? ph.steps[idx - 2].id : null})}, "위로"),
-      h("button", {disabled: idx === ph.steps.length - 1 || locked, onclick: () => send({type:"edit", op:"move_step", step_id:s.id, after: ph.steps[idx + 1].id})}, "아래로"),
-      h("button", {class:"danger", disabled: locked, onclick: () => { if (confirm(s.id + " 절차를 삭제할까요?")) { S.sel = null; send({type:"edit", op:"delete_step", step_id:s.id}); } }}, "삭제")));
-}
-function addStepForm(v, ph, after) {
-  const kind = h("select", {}, [["cli", "[AGENT] CLI 명령(aws·kubectl, 서버가 실행)"], ["manual", "[MANUAL] 수동 실행 명령(서버는 실행하지 않음)"], ["iac", "[MANUAL] 코드(IaC) 변경 체크리스트"], ["check", "[MANUAL] 수동 체크리스트"]].map(([k, t]) => h("option", {value:k}, t)));
-  const title = h("input", {placeholder:"제목", maxlength:120, style:"width:100%"}), cmd = h("input", {placeholder:"명령(실제 값을 써도 자동으로 가려집니다)", style:"width:100%"}),
-    chk = h("input", {placeholder:"확인(읽기) 명령 — 변경 명령이면 필요합니다", style:"width:100%"}), list = h("textarea", {placeholder:"체크리스트(한 줄에 하나)", style:"min-height:46px"});
-  return h("div", {class:"detail", style:"border-radius:6px;margin-top:5px"}, h("div", {class:"small muted"}, after ? "절차 끼워 넣기 — " + after + " 바로 뒤" : "절차 추가 — phase " + ph.id + " 맨 끝"), kind, title, cmd, chk, list,
-    h("div", {class:"row", style:"margin-top:5px"}, h("button", {class:"primary", onclick: () => {
-      const id = "custom-" + Date.now().toString(36), steps = [], k = kind.value, lines = list.value.split("\n").map(x => x.trim()).filter(Boolean);
-      const main = {id, kind:k, title:title.value};
-      if (k === "cli" || k === "manual") main.command = cmd.value;
-      if (k === "iac" || k === "check") main.checklist = lines;
-      steps.push(main);
-      if (k === "cli" && chk.value.trim()) steps.push({id:id + "-chk", kind:"cli", title:"확인: " + title.value, command:chk.value, check_for:id});
-      send({type:"edit", op:"add_steps", phase:ph.id, steps, ...(after ? {after} : {})}); S.addAt = null;
-    }}, "추가"), h("button", {onclick: () => { S.addAt = null; renderCenter(); }}, "취소")));
-}
-
 // 읽기 절차(사전 점검 포함)는 별도 승인 없이 "확인" 한 번으로 진행한다: 문서 근거가 있고 추가 조치가 없는 읽기 절차만
 const confirmable = s => s.op === "read" && s.grounded && s.requires.length === 0 && s.kind !== "manual";
 // 상세에는 입력이 필요한 것(사유·보고·확인 메모·재시도 선택)과 추가 조치 확인만 둔다. 승인·실행·확인(읽기)은 줄의 아이콘으로 한다.
@@ -644,6 +957,29 @@ function logPanel(v) {         // 활동 로그는 접어 둔다
 }
 
 // ---- 우측: 이 작업의 대화(프롬프트·추가 정보·실패 분석). 작업마다 따로이다 ----
+const OPTXT = {update_step:"고치기", delete_step:"지우기", add_step:"추가", move_step:"옮기기", duplicate_step:"복제"};
+const WHO_KO = {requester:"요청자만 누를 수 있습니다", approver:"요청자가 아닌 확인자만 누를 수 있습니다", anyone:"참여자 누구나 누를 수 있습니다"};
+function actionCard(v) {
+  const p = v.proposal, a = p.action;
+  return h("div", {class:"bubble", style:"border:2px solid var(--accent, #3b82f6)", "data-action":a.type},
+    h("div", {class:"small muted"}, "실행 제안 · " + p.by + " 요청 · 버튼을 눌러야 실행됩니다"),
+    h("div", {style:"margin:4px 0;font-weight:600"}, a.label), h("div", {class:"small muted"}, WHO_KO[a.who] || "", " · 누르는 사람의 권한과 서버 규칙이 그대로 적용됩니다"),
+    h("div", {class:"row", style:"margin-top:6px"}, h("button", {class:"primary", onclick: () => send({type:"accept_proposal", proposal:p.id})}, "실행"),
+      h("button", {onclick: () => send({type:"dismiss_proposal", proposal:p.id})}, "무시")));
+}
+function proposalCard(v) {
+  if (v.proposal.action) return actionCard(v);
+  const p = v.proposal, titles = Object.fromEntries((v.scratch.phases || []).flatMap(ph => ph.steps).map(s => [s.id, s.title || s.id]));
+  const line = o => { const nm = o.step_id ? (titles[o.step_id] || o.step_id) + " (" + o.step_id + ")" : "";
+    if (o.op === "update_step") return OPTXT[o.op] + " · " + nm + ": " + Object.entries(o.fields).map(([k, x]) => k + " → " + x).join(" / ");
+    if (o.op === "add_step") return OPTXT[o.op] + " · " + (o.step.title || "") + ": " + o.step.command + (o.after ? " (" + (titles[o.after] || o.after) + " 뒤)" : "");
+    if (o.op === "move_step") return OPTXT[o.op] + " · " + nm + (o.after ? " → " + (titles[o.after] || o.after) + " 뒤" : " → 단계 맨 앞");
+    return OPTXT[o.op] + " · " + nm; };
+  return h("div", {class:"bubble", style:"border:1px solid var(--accent, #3b82f6)"}, h("div", {class:"small muted"}, "수정안 · " + p.by + " 요청 · 수락하면 연습장에 적용(↶로 되돌림)"),
+    h("ul", {class:"small", style:"margin:4px 0 6px 16px;padding:0"}, p.ops.map(o => h("li", {}, line(o)))),
+    h("div", {class:"row"}, h("button", {class:"primary", onclick: () => send({type:"accept_proposal", proposal:p.id})}, "수락"),
+      h("button", {onclick: () => send({type:"dismiss_proposal", proposal:p.id})}, "무시")));
+}
 function renderChat() {
   keep($chat, () => {
     const v = S.view, kids = [h("div", {class:"pane-title", title:"이 작업의 대화입니다. 다른 작업은 ＋ 새 작업에서 시작하세요."}, "대화 · " + (S.sid ? (v ? (v.session.title || "(제목 없음)") : "…") : "새 작업"))];
@@ -654,7 +990,11 @@ function renderChat() {
     else {
       for (const m of (v.thread || [])) kids.push(h("div", {class:"bubble " + (m.role === "user" ? "user" : "bot")}, h("div", {class:"small muted"}, m.role === "user" ? "요청" : "에이전트"), h("div", {style:"white-space:pre-wrap"}, m.text)));
       const p = v.pipeline;
-      if (v.session.state === "draft" && p && p.status === "generating") kids.push(h("div", {class:"bubble"}, h("div", {class:"small muted"}, "에이전트"), "답변을 생성 중입니다… 절차를 만들고 있습니다(문서를 찾아 근거를 확인하는 중, 1~3분)."));
+      if (v.proposing && !S.echo) kids.push(h("div", {class:"bubble"}, h("div", {class:"small muted"}, "에이전트"), "수정안을 만드는 중입니다… 연습장은 아직 바뀌지 않았습니다."));
+      if (v.proposal) kids.push(proposalCard(v));
+      if (S.echo) kids.push(h("div", {class:"bubble user"}, h("div", {class:"small muted"}, "요청"), h("div", {style:"white-space:pre-wrap"}, S.echo.text)),
+        h("div", {class:"bubble"}, h("div", {class:"small muted"}, "에이전트"), "요청을 받았습니다. 처리 중입니다… (문서를 찾아 근거를 확인하는 중이라 1~3분쯤 걸릴 수 있습니다)"));
+      else if (v.session.state === "draft" && p && p.status === "generating") kids.push(h("div", {class:"bubble"}, h("div", {class:"small muted"}, "에이전트"), "답변을 생성 중입니다… 절차를 만들고 있습니다(문서를 찾아 근거를 확인하는 중, 1~3분)."));
       if (v.analyzing) kids.push(h("div", {class:"bubble"}, h("div", {class:"small muted"}, "에이전트"), "답변을 생성 중입니다… 절차 " + v.analyzing + "의 실패 원인을 분석하고 있습니다."));
       if (p && p.interpretations && p.interpretations.length) kids.push(h("div", {class:"small muted"}, h("b", {}, "모호한 표현을 이렇게 해석했습니다: "),
         p.interpretations.map(i => h("div", {}, "· " + i.alias + " → " + i.choice + (i.evidence ? " (근거: “" + i.evidence + "”)" : "")))));
@@ -663,6 +1003,7 @@ function renderChat() {
   });
 }
 // 입력창: 새 작업이면 요청(제목은 가운데에서), 되묻기·중단·거절 뒤이면 같은 세션에서 이어서 답한다
+const enabledEdit = v => v.scratch && v.scratch.total > 0 && !["completed", "aborted"].includes(v.session.state) && !v.proposing && !v.proposal && !v.analyzing && !S.echo && !(v.pipeline && v.pipeline.status === "generating");
 function renderComposer() {
   $comp.replaceChildren();
   if (!S.sid && !S.newTask) return;
@@ -673,18 +1014,26 @@ function renderComposer() {
   if (S.sid) {
     const p = v && v.pipeline, you = v && v.you;
     if (!v) { enabled = false; hint = "연결 중입니다…"; }
+    else if (S.echo) { enabled = false; hint = "요청을 보냈습니다. 처리 중입니다…"; }
+    else if (p && p.status === "manual" && ["draft", "plan_review", "plan_approved", "paused"].includes(v.session.state) && !v.analyzing) {
+      mode = "answer";
+      if (you.role !== "requester") { enabled = false; hint = "요청자가 에이전트에게 초안을 요청할 수 있습니다."; }
+      else hint = "에이전트에게 초안을 요청하세요. 예) dev 환경에 default VPC로 EC2 하나 만들어줘. 결과는 아직 검토 요청에 포함하지 않은 초안으로 연습장에 추가됩니다.";
+    }
     else if (v.session.state === "draft" && p && p.status === "generating") { enabled = false; hint = "답변을 생성 중입니다… 1~3분쯤 걸립니다."; }
     else if (v.session.state === "draft" && p && ["clarify", "stopped", "reject"].includes(p.status)) {
       mode = "answer";
       if (you.role !== "requester") { enabled = false; hint = "요청자가 답할 때까지 기다리는 중입니다."; }
       else hint = (p.status === "clarify" ? "위 질문에 대한 답을 이어서 적어 주세요." : p.status === "stopped" ? "내용을 보태서 다시 요청하거나, 오른쪽의 ‘다시 시도’를 누르세요." : "내용을 보태서 다시 요청해 주세요.") + " (이 작업의 추가 정보만 입력하세요. 다른 작업은 왼쪽의 ＋ 새 작업에서 시작합니다.)";
-    } else { mode = "none"; enabled = false; hint = v.analyzing ? "답변을 생성 중입니다…" : "가운데의 절차 목록에서 검토·수정·승인하세요. 새 요청은 왼쪽의 ‘＋ 새 작업’에서 시작합니다."; }
+    } else if (enabledEdit(v)) { mode = "edit"; hint = "말로 하세요. 고치기: 두 번째 절차 지워줘 / 3번 명령에 --dry-run 붙여줘. 진행: 검토 요청해줘 / 확정해줘 / apply 진행해줘 / 다음 절차 실행해줘. 수정안·실행 제안 카드가 나오고, 버튼을 눌러야 적용·실행됩니다."; }
+    else { mode = "none"; enabled = false; hint = v.analyzing ? "답변을 생성 중입니다…" : "가운데의 연습장에서 고치고 검토를 요청하세요. 새 요청은 왼쪽의 ‘＋ 새 작업’에서 시작합니다."; }
   }
   ta.setAttribute("placeholder", hint);
   if (!enabled) ta.setAttribute("disabled", "");
   const go = async () => {
     if (!ta.value.trim() || S.busy) return;
-    if (mode === "answer") { send({type:"answer", text:ta.value}); S.drafts[key] = ""; ta.value = ""; return; }
+    if (mode === "edit") { const text = ta.value; S.echo = {text}; send({type:"propose_edit", text}); S.drafts[key] = ""; ta.value = ""; renderChat(); renderComposer(); return; }
+    if (mode === "answer") { const text = ta.value; S.echo = {text}; send({type:"answer", text}); S.drafts[key] = ""; ta.value = ""; renderChat(); renderComposer(); return; }       // 보낸 즉시 내 글과 "처리 중"을 보여 준다
     const title = (S.drafts.title || "").trim(), nick = (S.drafts.nick || store.get("nick", "")).trim();
     if (!title) { toast("가운데에서 작업 제목을 먼저 입력하세요."); const t = document.getElementById("newtitle"); if (t && t.focus) t.focus(); return; }
     if (!nick) { toast("닉네임을 입력하세요."); return; }
@@ -698,8 +1047,10 @@ function renderComposer() {
   ta.addEventListener("keydown", ev => { if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); go(); } });
   const canRetry = mode === "answer" && enabled && v.pipeline.status === "stopped";
   $comp.append(h("div", {class:"row", style:"align-items:flex-end;flex-wrap:nowrap"}, h("div", {style:"flex:1"}, ta),
-    h("div", {class:"row", style:"flex-direction:column;align-items:stretch;gap:4px"}, h("button", {class:"primary", disabled:!enabled, onclick:go}, mode === "answer" ? "답하기" : "보내기"),
-      canRetry ? h("button", {onclick: () => send({type:"retry_generation"})}, "다시 시도") : null)),
+    h("div", {class:"row", style:"flex-direction:column;align-items:stretch;gap:4px"}, h("button", {class:"primary", disabled:!enabled, onclick:go}, mode === "answer" ? (v.pipeline.status === "manual" ? "초안 요청" : "답하기") : mode === "edit" ? "말로 요청" : "보내기"),
+      v && S.sid && mode !== "edit" && enabledEdit(v) ? h("button", {title:"입력한 말대로 연습장을 고칠 수정안을 만듭니다. 수락해야 적용됩니다", onclick: () => { const t = ta.value.trim(); if (!t) { toast("고칠 내용을 적어 주세요. 예) 두 번째 절차 지워줘, 3번 명령에 --dry-run 붙여줘"); return; }
+        S.echo = {text:t}; send({type:"propose_edit", text:t}); S.drafts[key] = ""; ta.value = ""; renderChat(); renderComposer(); }}, "말로 요청") : null,
+      canRetry ? h("button", {onclick: () => { S.echo = {text:"(같은 내용으로 다시 시도)"}; send({type:"retry_generation"}); renderChat(); renderComposer(); }}, "다시 시도") : null)),
     h("div", {class:"small muted"}, "Enter로 보내기, Shift+Enter로 줄바꿈"));
 }
 

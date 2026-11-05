@@ -3,7 +3,7 @@ cli: kubectl
 service: kubectl
 topic: apply-delete
 commands:
-  - {name: apply, kind: mutate, risk: medium, required: [], optional: [--filename, --namespace, --dry-run, --selector], verify: get, guard: [file-input], impact: {disruption: possible, replaces: false, reversible: partial, preflight: [get], dry_run: "--dry-run=server (kubectl diff 권장)", iac: true}}
+  - {name: apply, kind: mutate, risk: medium, required: [--filename], optional: [--filename, --namespace, --dry-run, --selector], verify: get, guard: [file-input], impact: {disruption: possible, replaces: false, reversible: partial, preflight: [get], dry_run: "--dry-run=server (kubectl diff 권장)", iac: true}}
   - {name: create, kind: mutate, risk: medium, required: [], optional: [--filename, --namespace, --dry-run], verify: get, guard: [file-input], impact: {disruption: none, replaces: false, reversible: full, preflight: [get], dry_run: "--dry-run=server", iac: true}}
   - {name: delete, kind: mutate, risk: high, required: [], optional: [--filename, --namespace, --selector, --all, --all-namespaces, --dry-run, --wait], verify: get, guard: [delete-all], impact: {disruption: likely, replaces: false, reversible: irreversible, preflight: [get, describe], dry_run: "--dry-run=server", iac: true}}
   - {name: patch, kind: mutate, risk: medium, required: [], optional: [--patch, --type, --namespace, --dry-run], verify: describe, impact: {disruption: possible, replaces: false, reversible: partial, preflight: [describe], dry_run: "--dry-run=server", iac: true}}

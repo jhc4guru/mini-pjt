@@ -123,3 +123,16 @@ def test_chat_sends_tools_and_blocks_leaks_inside_tool_results():
     leaky_use = [{"role": "assistant", "content": [{"toolUse": {"toolUseId": "1", "name": "t", "input": {"q": "sg-0123456789abcdef0"}}}]}]
     with pytest.raises(LeakError):
         c.chat("MAIN", leaky_use)
+
+
+def test_a_non_throttling_error_stops_without_fallback_and_records_only_its_kind(tmp_path):
+    audit = AuditLog(tmp_path / "a.sqlite")
+
+    class ReadTimeoutError(Exception):                      # 응답 코드가 없는 전송 오류(긴 응답이 읽기 제한에 걸린 경우)
+        pass
+    c, _ = make({"m-main": [ReadTimeoutError("Read timeout on endpoint URL: https://bedrock-runtime.us-east-1.amazonaws.com 123456789012")]}, audit=audit)
+    with pytest.raises(LLMUnavailable) as ex:
+        c.complete("MAIN", "x", session_id="s2")
+    assert "ReadTimeoutError" in str(ex.value) and "123456789012" not in str(ex.value) and c._client.calls == ["m-main"]       # 폴백하지 않고 원인 종류만 올린다
+    recs = [r["reasons"][0] for r in audit.query(session_id=None) if r["reasons"] and r["reasons"][0].startswith("llm_error")]
+    assert recs and recs[0].startswith("llm_error:MAIN:ReadTimeoutError") and "123456789012" not in recs[0]

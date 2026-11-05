@@ -24,7 +24,7 @@ from app.guards.command_guard import CommandGuard
 from app.guards.masking import Masker
 from app.llm import LLMClient, LLMUnavailable
 from app.planner.intake import IntakeResult
-from app.planner.prompts import SUBMIT_TOOLS, SYSTEM_PROMPT
+from app.planner.prompts import DRAFTS_NOTE, SUBMIT_TOOLS, SYSTEM_PROMPT
 from app.planner.schema import STEP_ID, Plan, PlanDraft, PlanInvalid, PhaseDraft, StepDraft, build_plan
 from app.planner.toolloop import LoopStop, ToolLoop, schema_codes, submit_spec
 
@@ -99,10 +99,10 @@ class PlanningAgent:
         self._tools = tool_specs() + SUBMIT_SPECS
 
     # ---- 공개 ----
-    def run(self, intake: IntakeResult, *, iac_managed: bool = False, session_id: str | None = None) -> PlanResult:
+    def run(self, intake: IntakeResult, *, iac_managed: bool = False, session_id: str | None = None, drafts: bool = False) -> PlanResult:
         if intake.decision != "proceed" or not intake.masked_text:
             raise ValueError("접수가 proceed인 요청만 계획할 수 있다")
-        self._session, self._iac = session_id, iac_managed
+        self._session, self._iac, self._drafts = session_id, iac_managed, drafts
         self._loop = ToolLoop(
             llm=self._llm, toolbox=self._toolbox, masker=self._masker, budget=self._budget, system=SYSTEM_PROMPT, tools=self._tools,
             submit_tools=frozenset(SUBMIT_TOOLS), role="MAIN", max_tokens=MAX_OUTPUT_TOKENS, max_repairs=self._max_repairs,
@@ -114,8 +114,8 @@ class PlanningAgent:
             result = self._result("stopped", reasons=(e.code,), detail=tuple(e.detail))
         except GuardLimitError as e:
             result = self._result("stopped", reasons=(getattr(e, "code", "limit"),), detail=(e.detail,) if getattr(e, "detail", "") else ())
-        except LLMUnavailable:
-            result = self._result("stopped", reasons=("llm_unavailable",))
+        except LLMUnavailable as e:
+            result = self._result("stopped", reasons=("llm_unavailable",), detail=(str(e)[:100],))      # 원인 종류(쓰로틀링·오류 종류)만. 값은 없다
         except LeakError:
             result = self._result("stopped", reasons=("leak_blocked",))
         self._log(result)
@@ -178,15 +178,18 @@ class PlanningAgent:
         return self._result("plan", plan=plan)
 
     # ---- 메시지 ----
-    @staticmethod
-    def _task_text(intake: IntakeResult) -> str:
+    def _task_text(self, intake: IntakeResult) -> str:
         interp = "\n".join(f"- {i['alias']} → {i['choice']}" for i in intake.interpretations) or "(없음)"
-        return (
+        return (self._drafts_note() if getattr(self, "_drafts", False) else "") + (
             f"<user_request>\n{intake.masked_text}\n</user_request>\n\n"
             f"정규화 질의: {intake.normalized_query}\n서비스: {', '.join(intake.services) or '(미정)'}\n의도: {intake.intent}\n"
             f"해석:\n{interp}\n\n"
             "필요하면 도구로 조사한 뒤 submit_outline으로 phase 윤곽을 제출하거나, 꼭 필요한 정보가 없으면 request_clarification으로 물어라."
         )
+
+    @staticmethod
+    def _drafts_note() -> str:
+        return DRAFTS_NOTE + "\n\n"
 
     def _phase_text(self, op: _OutlinePhase, earlier: list[PhaseDraft], outline: _OutlineInput) -> str:
         plan_txt = "\n".join(f"- {p.id}: {p.title}" + (f" — {p.purpose}" if p.purpose else "") + (" [게이트]" if p.gate else "") for p in outline.phases)

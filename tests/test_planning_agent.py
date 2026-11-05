@@ -383,3 +383,24 @@ def test_system_prompt_tells_the_agent_to_use_previous_questions_and_treat_defau
     for phrase in ("[이전 질문]", "[추가 정보]", "이미 답한 것은 다시 묻지 않는다", "기본(default) VPC·서브넷·보안 그룹", "isDefault,Values=true", "default-for-az", "\"없음\"이라고 한 선택 항목"):
         assert phrase in SYSTEM_PROMPT, phrase
     assert not find_sensitive(SYSTEM_PROMPT) and not find_secrets(SYSTEM_PROMPT)
+
+
+def test_the_system_prompt_teaches_references_to_earlier_step_output_and_their_error_codes():
+    from app.planner.prompts import SYSTEM_PROMPT
+    for phrase in ("@{앞 step id.JSON 필드 경로}", "GroupId", "ref_unknown_or_forward", "ref_target_not_runnable", "ref_not_allowed_here", "리소스 ID만 꺼내"):
+        assert phrase in SYSTEM_PROMPT, phrase
+
+
+def test_drafts_mode_tells_the_agent_to_use_defaults_and_not_to_ask():
+    from app.planner.agent import PlanningAgent
+    from app.planner.prompts import DRAFTS_NOTE
+    for phrase in ("연습장 초안 모드", "되묻지 말고", "t3.micro", "Amazon Linux 2023", "가정:", "request_clarification"):
+        assert phrase in DRAFTS_NOTE, phrase
+    assert "@{" not in DRAFTS_NOTE.replace("앞 step 결과 참조", "")                                  # format을 거치지 않는 평문이라 중괄호 참조 문법을 쓰지 않는다
+    pa = PlanningAgent.__new__(PlanningAgent)
+    from app.planner.intake import IntakeResult
+    intake = IntakeResult("proceed", masked_text="EC2 하나 만들어줘", normalized_query="EC2 생성", services=("ec2",), intent="change")
+    pa._drafts = True
+    assert pa._task_text(intake).startswith("[연습장 초안 모드]")
+    pa._drafts = False
+    assert "[연습장 초안 모드]" not in pa._task_text(intake)
