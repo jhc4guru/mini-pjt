@@ -1,8 +1,8 @@
-# DevOps Plan/Apply Agent
+﻿# DevOps Plan/Apply Agent
 
 AWS 인프라 운영의 반복 작업(작업 계획 생성, CLI 명령 작성)을 모델이 대신 만들고, **두 사람이 같은 화면에서 확인·승인한 뒤 실행**하는 웹 도구입니다.
 
-> **현재 상태: 개발 중 (Phase 1, 로컬 + mock 실행).** 지식베이스, 검색기, 가드레일까지 동작합니다. 에이전트, 승인 흐름, 웹 서버는 아직 만들지 않았습니다. 무엇이 되고 무엇이 아직인지는 [구조도](#구조도)와 [현재 상태](#현재-상태)를 보세요.
+> **현재 상태: 개발 중 (Phase 1, 로컬 + mock 실행).** 지식베이스, 검색기, 가드레일, 에이전트, 실행기, 세션·승인 흐름, 웹 서버(WebSocket API)와 웹 화면(좌측 이력·새 작업·작업자, 중앙 절차 목록, 우측 대화)까지 동작합니다. 무엇이 되고 무엇이 아직인지는 [구조도](#구조도)와 [현재 상태](#현재-상태)를 보세요.
 
 ## 무엇을 푸나
 
@@ -71,31 +71,30 @@ flowchart LR
   classDef done fill:#d6f0dc,stroke:#2e7d32,color:#111;
   classDef part fill:#fff3cd,stroke:#b8860b,color:#111;
   classDef plan fill:#f2f2f2,stroke:#888,stroke-dasharray:5 5,color:#111;
-  class IG,MK,RAG,KB,LLM,CG,GATE done;
-  class DB part;
-  class WEB,AG,AP,EX,MOCK,MAN plan;
+  class IG,MK,AG,RAG,KB,LLM,CG,GATE,EX,MOCK,AP,WEB done;
+  class DB,MAN part;
 ```
 
 - **마스킹 경계:** 모델·임베딩·리랭크·트레이스는 마스킹된 텍스트만 봅니다. 실제 값은 승인 화면과 실행 단계에서만 서버가 복원합니다.
 - **모든 명령은 같은 길을 지납니다:** 명령 가드 → 승인 엔진 → 실행 관문. `manual` 명령은 이 관문에서 막혀 사람이 직접 실행합니다.
 - **에이전트는 제안만 합니다:** 도구는 읽기 전용(문서 검색, 인벤토리 조회, 읽기 명령 실행)이고, 변경은 승인 엔진을 거쳐야 합니다.
 - **지식베이스와 색인:** 앱이 읽는 원본은 `knowledge/cli`, 검색 색인은 실행하면 만들어지는 `data/chroma`입니다.
-- SQLite는 감사 기록만 구현됐고(가드 판정 저장), plan·apply 이력과 세션은 예정입니다.
+- SQLite에는 감사 기록(가드 판정)과 세션·참여자·plan 버전·step 상태·승인·실행 결과·이벤트가 저장됩니다. 서버를 재시작해도 승인된 plan을 이어서 실행할 수 있고(마스킹 매핑은 세션별 암호화 저장), 이력 조회 화면은 예정입니다.
 
 ## 활용한 패턴 (Day 1~7)
 
 | 패턴 | Day | 이 프로젝트에서 | 상태 |
 |---|---|---|---|
-| LCEL chain · Pydantic 구조화 출력 | 1 | 에이전트 출력을 스키마로 검증하고 실패 시 재시도 후 사람에게 넘김(`validate_structured`). 질의 정규화 체인은 예정 | 일부 |
+| LCEL chain · Pydantic 구조화 출력 | 1 | 접수(질의 정규화·범위 판단), 계획, 리뷰어, 실패 분석의 출력을 스키마로 검증하고 실패 시 재시도 후 사람에게 넘김(`validate_structured`) | 사용 중 |
 | RAG (하이브리드·리랭킹) | 2 | 명령 단위 chunk, BM25(한국어+CLI 토큰) + Titan 벡터 + RRF + LLM 리랭크 | 사용 중 |
-| ReAct (도구 자율 선택) | 3 | 계획 에이전트가 읽기 전용 도구를 자율 호출 | 예정 |
-| 도구 다중 | 4 | 문서 검색·인벤토리 조회·읽기 명령 3종을 한 요청에서 결합 (DB·계산기·외부 API는 범위 밖) | 예정 |
+| ReAct (도구 자율 선택) | 3 | 계획·실패 분석 에이전트가 읽기 전용 도구를 자율 호출(조사 → 제출 → 서버 검증 → 수정) | 사용 중 |
+| 도구 다중 | 4 | 문서 검색·인벤토리 조회·읽기 명령 3종을 한 요청에서 결합 (DB·계산기·외부 API는 범위 밖) | 사용 중 |
 | MCP 서버 연동 | 4 | 사용하지 않음 | 범위 밖 |
 | 가드레일 (인젝션·PII) | 5 | 입력·명령 가드, 마스킹, 간접 인젝션 방어, 시크릿 차단, 에이전트 한도, 실행 관문 | 사용 중 |
-| HITL (위험 작업 승인) | 5 | 4-eyes 승인, 위험 phase 게이트, 일시정지·재개 | 예정 |
-| 미들웨어 (요약·마스킹·재시도) | 5 | 마스킹과 스키마 재시도는 사용 중. 대화 이력 요약은 포함하지 않음 | 일부 |
+| HITL (위험 작업 승인) | 5 | 4-eyes 승인(plan 일괄·step별), 위험 phase 게이트, 일시정지·부분 재계획·재개. 엔진과 WebSocket API는 구현, 화면은 예정 | 일부 |
+| 미들웨어 (요약·마스킹·재시도) | 5 | 마스킹, 스키마 재시도, MAIN 쓰로틀링 시 SUB 폴백, 단계가 끝나면 중간 대화를 요약으로 압축 | 사용 중 |
 | Multi-Agent Supervisor | 6 | 서비스별 전문 에이전트 + supervisor | Phase 2 후보 |
-| Plan-Execute · 장기 메모리 | 7 | plan/apply 분리와 phase 구조는 설계 완료, 구현 예정. 이력 기반 재사용(장기 메모리)은 Phase 2 | 예정 |
+| Plan-Execute · 장기 메모리 | 7 | plan 생성(phase·게이트·롤백·확인 step), 승인·apply 흐름, mock 실행기는 구현. 이력 기반 재사용(장기 메모리)은 Phase 2 | 일부 |
 | Observability · Trace | 7 | 로컬 트레이스 기본, Langfuse는 개발 단계 한정 | 예정 |
 | 평가 (RAGAS · LLM-as-Judge) | 7 | 검색 평가셋은 사용 중, RAGAS·LLM-as-Judge는 예정 | 일부 |
 
@@ -105,10 +104,12 @@ flowchart LR
 |---|---|
 | CLI 지식베이스 (`knowledge/cli`, 문서 20개·명령 141개) + 용어 사전 + 검증기 | 완료 |
 | 검색기 (BM25 + 벡터 + LLM 리랭크, 평가셋 80 케이스에서 hit@1 0.99) | 완료 |
-| 가드레일 (마스킹·복원, 입력·명령 가드, 에이전트 한도, 실행 관문, 감사 기록) | 완료 (코드·테스트). 에이전트와 승인 흐름에는 아직 연결 전 |
-| 에이전트 (계획, 리뷰어, 실패 분석) | 예정 |
-| 실행기 (moto mock, kubectl 고정 응답) | 예정 |
-| 세션 공유·승인 흐름, 웹 UI | 예정 |
+| 가드레일 (마스킹·복원, 입력·명령 가드, 에이전트 한도, 실행 관문, 감사 기록) | 완료 (코드·테스트). 에이전트·승인 흐름·웹에 연결됨 |
+| 에이전트 (접수, 계획, 리뷰어, 실패 분석) | 완료 (코드·테스트, 실제 모델로 EKS 업그레이드 시나리오 확인). 승인 흐름·웹에 연결됨 |
+| 실행기 (단일 관문, 요청별 격리 환경, 루프백 moto + 시뮬레이터 + kubectl 고정 응답) | 완료 (코드·테스트) |
+| 세션·승인·apply 진행 (멤버 토큰 신원, plan 해시 잠금, step·게이트 4-eyes, 실패 후 재시도·건너뛰기·중단, manual·iac·poll, 재시작 복구, 부분 재계획) | 완료 (코드·테스트, 실제 모델·mock 실행기로 EKS 세션 확인) |
+| 웹 서버 (FastAPI + WebSocket, 인증·Origin 검사) | 완료 (코드·테스트) |
+| 웹 UI (단일 HTML, 세로 3분할: 이력·작업자 / 절차 목록(승인·수정·드래그앤드롭) / 대화) | 완료 (가짜 DOM 테스트 + 실제 Chrome 조작 확인). 종료된 작업의 상세 보기·파일 내용 표시는 예정 |
 
 세부 작업은 [TASK.md](TASK.md)에서 추적합니다.
 
@@ -141,6 +142,12 @@ $env:RUN_BEDROCK_TESTS="1"; $env:RUN_CLI_TESTS="1"; .venv\Scripts\python.exe -m 
 
 # 검색 방식 비교 평가 (Bedrock 호출, 결과는 eval/reports/에 저장)
 .venv\Scripts\python.exe eval\eval_retrieval.py --rerank --show-failures 10
+
+# mock 실행기(moto 서버 + 시뮬레이터 + kubectl 고정 응답) 테스트. aws CLI가 필요하고 moto 서버를 자동으로 띄운다(약 30초)
+.venv\Scripts\python.exe -m pytest tests\test_mock_executor.py -q
+
+# EKS 1.35→1.36 업그레이드 시나리오를 실제 모델(Bedrock)과 mock 실행기로 한 번 끝까지(접수 → 계획 → 리뷰어). 2~3분, 모델 호출 비용(약 30만 토큰)이 든다
+.venv\Scripts\python.exe eval\run_eks_scenario.py
 ```
 
 ### mock AWS 서버로 CLI 시험해 보기
@@ -152,7 +159,18 @@ aws --endpoint-url http://127.0.0.1:5000 ec2 describe-security-groups
 ```
 
 ### 웹 서버 실행
-아직 없습니다(예정). 구현되면 이 절에 실행 명령을 적습니다.
+```powershell
+.venv\Scripts\python.exe -m app.web.main            # 127.0.0.1:8000, 실제 Bedrock 모델 + mock 실행기
+```
+`GET /api/health`가 `{"ok":true}`를 돌려주고 `GET /`가 화면을 내려주는 것까지 확인했습니다(2026-11-05). 브라우저에서 `http://127.0.0.1:8000`을 열고 `＋ 새 작업`을 눌러 제목과 닉네임을 정한 뒤 오른쪽 대화창에 작업을 입력합니다. 추가 정보가 필요하면 같은 대화에서 물어보고, 답을 입력하면 이어서 계획을 만듭니다. 가운데에서 절차를 검토·수정(끌어서 순서 변경)하고, 4-eyes는 왼쪽의 `초대 링크 만들기`로 만든 링크를 다른 탭에서 열어 다른 닉네임으로 참여해 확인합니다. 작업 이력의 내용은 서버 DB에서 읽고, 이 브라우저에는 접속 자격(토큰)만 저장됩니다. 이력은 한 줄이고 오른쪽 끝 점의 색이 단계입니다(노랑=PLAN 작성 중·APPLY 대기, 초록 깜빡임=APPLY 진행 중, 주황=일시정지, 파랑=완료, 회색=중단). Apply 탭은 plan 승인 뒤 `apply 진행 →`을 눌러야 생기고, 절차 줄의 ☐(승인)·▶(실행) 아이콘으로 진행하며 실행 로그는 아래 터미널 영역에 쌓입니다.
+
+### 인벤토리(리소스 이름) 설정
+클러스터·ASG 같은 이름은 패턴이 없어서 `data/inventory.yaml`에 적어야 모델로 나가기 전에 가려지고 `lookup_inventory`도 동작합니다. 주석이 달린 `inventory.example.yaml`을 복사해 고칩니다.
+```powershell
+copy inventory.example.yaml data\inventory.yaml     # 그다음 data\inventory.yaml 의 이름을 환경에 맞게 고친다(git에는 올라가지 않는다)
+.venv\Scripts\python.exe -c "from app.guards.masking import Inventory, Masker; print(Masker(Inventory.from_env()).mask('dev-main 클러스터의 rcs ASG'))"
+```
+이름이 `<CLUSTER_1>`·`<ASG_1>`로 바뀌어 나오면 정상입니다(2026-11-05 확인). 화면을 쓰지 않고 `POST /api/sessions`와 WebSocket `/ws/{session_id}`(첫 메시지 `{"type":"auth","token":...}`)로 직접 쓸 수도 있습니다. 메시지 목록은 `docs/IMPLEMENTATION.md` 3절입니다. 서버를 강제 종료하면 mock moto 프로세스가 남을 수 있으니 정상 종료(Ctrl+C)하세요.
 
 ## RAGAS 평가 결과
 
@@ -176,7 +194,7 @@ aws --endpoint-url http://127.0.0.1:5000 ec2 describe-security-groups
 
 평가셋을 문서 작성자가 만들어 실제 사용자 표현보다 쉬울 수 있습니다. 질의당 지연은 벡터 약 0.25초, 리랭크 약 1초입니다.
 
-자동 테스트는 기본 218개가 통과하고, 환경변수로 켜는 Bedrock·실제 CLI 테스트 7개를 포함하면 225개가 모두 통과합니다. 가드레일에는 우회 시도 회귀 테스트와, 사용자 입력부터 승인 화면까지 흘려 외부 모델 경계로 실제 값이 한 번도 나가지 않음을 확인하는 종단 테스트가 있습니다.
+자동 테스트는 기본 651개가 통과하고(7개 건너뜀), 환경변수로 켜는 Bedrock·실제 CLI 테스트 7개를 포함하면 658개가 모두 통과합니다(2026-11-05 측정). 가드레일에는 우회 시도 회귀 테스트와, 사용자 입력부터 승인 화면까지 흘려 외부 모델 경계로 실제 값이 한 번도 나가지 않음을 확인하는 종단 테스트가 있습니다.
 
 ## 인-아웃 세트 통과율 (자체 평가)
 
@@ -186,7 +204,20 @@ aws --endpoint-url http://127.0.0.1:5000 ec2 describe-security-groups
 - 2차 (하이브리드 + LLM 리랭크 적용 후): **80 / 80** 통과 (상위 1위 정답 79 / 80)
 - 개선폭: **+5건** (벡터 결합 +2, LLM 리랭크 +3). 주요 개선 사항은 벡터 검색 결합과 LLM 리랭크입니다.
 
-에이전트 평가셋(`eval/agent_cases.csv`, 42건: positive 16·negative 8·edge 12·guardrail 6, EKS 업그레이드 시나리오 포함)은 작성했지만 에이전트(T4) 구현 전이라 아직 실행하지 않았습니다. LLM-as-Judge 채점은 T9 예정입니다.
+에이전트 평가셋(`eval/agent_cases.csv`, 42건: positive 16·negative 8·edge 12·guardrail 6, EKS 업그레이드 시나리오 포함)은 작성했지만 아직 전체를 실행·채점하지 않았습니다(LLM-as-Judge는 T9 예정). 대신 EKS 업그레이드 시나리오 한 건을 실제 모델과 mock 실행기로 반복 실행해 봤습니다.
+
+### 계획 에이전트 실측 (EKS 1.35→1.36, `eval/run_eks_scenario.py`, 2026-11-04)
+
+| 실행 | 결과 | phase / step | 호출 | 누적 토큰 | 계획 단계 시간 |
+|---|---|---|---|---|---|
+| 윤곽 대화 압축 전 | 계획 생성 성공 | 7 / 46 | 15 | 371,000 | 121초 |
+| 윤곽 대화 압축 전 | **토큰 한도(500,000) 초과로 중단** | - | 19 | 506,000 | 137초 |
+| 압축 후 1 | 계획 생성 성공, 수정 0회 | 6 / 52 | 도구 25 | 298,000 | 111초 |
+| 압축 후 2 | 계획 생성 성공, 수정 0회 | 7 / 55 | 도구 23 | 282,000 | 99초 |
+
+- **세션 종단 확인(2026-11-05, `eval/run_eks_session.py`):** 같은 시나리오를 세션 서비스로 처음부터 끝까지 돌렸습니다(실제 모델, mock 실행기, 승인자 역할은 스크립트가 대신하므로 사람 검토의 대체가 아닙니다). 계획 생성 190초·303,795 토큰(6 phase·48 step, 위험 등급 high), 요청자 plan 승인은 거부되고 다른 참여자 승인 후 apply 19초에 48 step 모두 완료, 세션 `completed`. 첫 실행(58 step, 324,609 토큰)에서는 모델이 poll step을 변경 step의 확인으로 써서 자동 확인 실행이 오류로 멈췄고, 고친 뒤 회귀 테스트를 추가했습니다.
+- 실행마다 phase 수·수정 횟수가 달라 토큰이 크게 변합니다. 한도는 700,000으로 올렸습니다(D-26 재조정 2).
+- 계획은 컨트롤 플레인 업그레이드(Terraform `iac` step + poll), 애드온, 노드 교체(ASG 인스턴스 리프레시), 최종 검증으로 나뉘고, 되돌릴 수 없는 컨트롤 플레인 phase의 게이트가 잠겼으며 리뷰어 위험 등급은 high였습니다. 읽기 조회는 mock 환경에서 실제로 실행됐습니다. 결과의 정확도는 사람이 검토해야 하며 자동 채점은 아직 없습니다.
 
 ## 트라이앤에러 회고
 
@@ -194,6 +225,9 @@ aws --endpoint-url http://127.0.0.1:5000 ec2 describe-security-groups
 - **용어 사전으로 질의 확장:** 도움이 될 거라 가정했지만 BM25 hit@3이 0.94에서 0.84로 떨어졌습니다. 문서의 `키워드:` 줄이 이미 동의어 역할을 해서 중복이고 노이즈였고, `서버`가 EC2로 확장돼 오검색도 났습니다. 기본에서 빼고 모호한 표현을 되묻는 용도로만 씁니다.
 - **위험 명령 9개를 생성 금지로 지정:** 사용자 제안으로 "문구만 제공하고 사람이 자기 터미널에서 실행"하는 `manual` 종류로 바꿨습니다. 금지보다 편의가 높고 안전은 같으며 시크릿이 시스템에 남지 않습니다.
 - **벡터 검색 단독, 크로스인코더 리랭커:** 벡터 단독은 BM25보다 약했고(hit@3 0.85), `bge-reranker`는 torch와 약 2GB 모델이 필요해 명령 141개 규모에는 과했습니다.
+- **마스킹 경계의 구멍(실측으로 발견):** 한글 조사가 붙은 값(`sg-…를`, `123456789012의`)과 `vpc-cidr-assoc-…` 같은 접두사 목록 밖의 ID가 마스킹을 피해 갔습니다. 파이썬 정규식의 `\b`가 한글을 단어 문자로 보기 때문이었고, 경계를 ASCII 기준으로 바꾸고 ID는 일반 패턴으로 넓혔습니다.
+- **작은 모델에 판단을 맡긴 접수 단계:** READ 모델이 EKS 업그레이드를 "Terraform이라 범위 밖"으로 거절하고 현재 AMI 같은 조회로 알 수 있는 것을 되물었습니다. 필수 값 누락은 읽기 도구를 가진 계획 에이전트가 묻도록 옮기고, 범위 밖 판정은 서버가 인프라 근거가 있으면 뒤집게 했습니다.
+- **moto가 못 하는 명령:** EKS 업그레이드와 ASG 인스턴스 리프레시가 moto에서 지원되지 않아(46개 명령 중 36개 성공) 상태를 가진 시뮬레이터로 대신했습니다.
 - **가드레일 1차 구현:** 직접 뚫어 본 점검에서 우회 6건을 찾았습니다(`Principal`의 `Service` 키 와일드카드, `0.0.0.0/00` 표기, `kubectl run -it`, 도움말을 읽다 실행되는 kubectl 플러그인, 파일 지정 `get -o yaml`로 시크릿 읽기, presign 서명 노출). 모두 수정하고 회귀 테스트로 남겼습니다.
 - **문서 구조:** `docs/cli`에 서비스·기능이 섞인 폴더(`ec2_sg`, `eks_kubectl`)로 시작했다가 CLI 도구별로, 이후 앱이 읽는 데이터라 `knowledge/cli`로 옮겼습니다. 문서를 줄이다가 동작을 좌우하는 규칙이 `CLAUDE.md`에서 빠져 복구하기도 했습니다.
 
@@ -205,7 +239,7 @@ aws --endpoint-url http://127.0.0.1:5000 ec2 describe-security-groups
 - 결정마다의 이유와 검토한 대안, 번복 이력은 [docs/DECISIONS.md](docs/DECISIONS.md)에 있습니다.
 
 ### 남은 한계 · 향후 개선 방향
-- 에이전트, 승인 흐름, 웹 서버, 실행기는 아직 없습니다. 다음 단계는 에이전트(T4), 실행기(T5), 세션·승인(T6)이고 Phase 2는 이력 기반 계획 재사용과 엑셀 계획서 import, Phase 3는 테라큐브·GitHub PR·실제 AWS role입니다.
+- 승인 흐름, 세션 공유, 저장(이력), 웹 UI는 아직 없습니다. 다음 단계는 세션·승인(T6), 저장(T7), UI(T8), 평가(T9)이고 Phase 2는 이력 기반 계획 재사용과 엑셀 계획서 import, Phase 3는 테라큐브·GitHub PR·실제 AWS role입니다.
 - 사용자 구분은 닉네임(자기 신고)입니다. 실제 운영 전에 인증이 필요합니다.
 - 인벤토리에 없는 리소스 이름은 마스킹되지 않을 수 있습니다. 시크릿·인젝션 탐지는 패턴 기반이라 완전하지 않습니다.
 - 검색 평가셋은 작성자가 만들었고, RAGAS와 계획 단계 평가는 아직 측정하지 않았습니다.
@@ -217,7 +251,8 @@ aws --endpoint-url http://127.0.0.1:5000 ec2 describe-security-groups
 - `app/rag/retriever.py` `HybridRetriever`: BM25 + 벡터 + RRF + 리랭크. 진입점은 `app/rag/factory.py` `build_retriever`, 리랭커는 `app/rag/reranker.py` `LLMReranker`
 - `app/guards/command_guard.py` `CommandGuard`: 명령 가드(모델 출력·사용자 입력 공통). 옵션 스냅샷은 `app/guards/cli_snapshot.py` `CliSnapshot`
 - `app/guards/masking.py` `Masker`: 마스킹·복원. 입력은 `app/guards/input_guard.py` `check_user_input`, 외부 텍스트는 `app/guards/untrusted.py` `sanitize_untrusted`
-- `app/guards/execution_policy.py` `assert_server_executable`: 서버 실행의 단일 관문
+- `app/guards/execution_policy.py` `assert_server_executable`: 서버 실행의 단일 관문. 실행기는 `app/executor/base.py` `Executor.execute`(관문 + 승인 내용 일치 + 실행하는 쪽 가드 재검사), mock은 `app/executor/mock.py`, 시뮬레이터는 `app/executor/simulator.py`
+- `app/planner/pipeline.py` `PlanPipeline`: 접수(`intake.py`) → 계획 에이전트(`agent.py`, 프롬프트 `prompts.py`, 스키마 `schema.py`, 후처리 `postprocess.py`) → 리뷰어(`review.py`). 실패 분석은 `failure.py`, 도구 호출 루프는 `toolloop.py`, LLM 호출·폴백은 `app/llm.py`
 - `app/guards/agent_limits.py` `AgentBudget`, `app/guards/boundary.py` `assert_outbound_clean`, `app/guards/audit.py` `AuditLog`
 - `knowledge/cli/`: CLI 지식베이스(규격 `SCHEMA.md`), `tests/check_docs.py`: 실제 CLI와 대조하는 검증기
 - `eval/eval_retrieval.py`, `eval/retrieval_cases.yaml`: 검색 평가. `eval/agent_cases.csv`, `eval/agent_cases.py`: 에이전트 평가셋과 로더

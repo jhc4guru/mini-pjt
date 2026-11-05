@@ -152,7 +152,11 @@ def test_repeat_and_call_limits_stop_the_agent(env):
     cmd = {"command": "aws ec2 describe-vpcs"}
     tb.call("run_read_command", cmd)
     tb.call("run_read_command", cmd)
-    with pytest.raises(BudgetExceeded):
+    for _ in range(2):                                          # 반복 호출은 처음 두 번은 오류로 알리고(실행하지 않는다)
+        r = tb.call("run_read_command", cmd)
+        assert r["ok"] is False and r["error"] == "repeated_call" and "중단" in r["hint"]
+    assert len(runner.calls) == 2                               # 알린 호출은 실행되지 않았다
+    with pytest.raises(BudgetExceeded):                         # 그래도 또 하면 중단한다
         tb.call("run_read_command", cmd)
     tb2 = make(Limits(max_tool_calls=1))
     tb2.call("lookup_inventory", {"category": "bucket"})

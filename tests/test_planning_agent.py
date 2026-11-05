@@ -220,14 +220,36 @@ def test_plain_text_answers_are_nudged_then_stopped(world):
     assert agent2.run(intake).status == "clarify"
 
 
-def test_real_values_in_output_stop_the_run_and_are_not_sent_back(world):
+def test_real_values_in_tool_input_are_sent_back_as_errors_and_never_kept_or_resent(world):
+    """D-45: 도구 호출 인자의 누출은 실행하지 않고 오류로 돌려 고치게 한다. 누출된 입력은 어떤 요청에도 실리지 않는다. 계속되면 중단한다."""
     make, intake, _, _ = world
     leaky = reboot_steps("<INSTANCE_1>")
     leaky["steps"][0]["command"] = f"aws ec2 describe-instances --instance-ids {INSTANCE}"
-    agent, fake, _ = make([tools(use("submit_outline", outline("p1"), "a")), tools(use("submit_phase", leaky, "b")), tools(use("submit_phase", leaky, "c"))])
+    agent, fake, _ = make([tools(use("submit_outline", outline("p1"), "a")), tools(use("submit_phase", leaky, "b")), tools(use("submit_phase", leaky, "c")),
+                           tools(use("submit_phase", leaky, "d"))])
     r = agent.run(intake)
-    assert r.status == "stopped" and r.reasons == ("model_output_unsafe",) and len(fake.calls) == 2
-    assert INSTANCE not in json.dumps(fake.calls)                              # 누출된 출력은 어떤 요청에도 실리지 않는다
+    assert r.status == "stopped" and r.reasons == ("model_output_unsafe",) and len(fake.calls) == 4         # 두 번은 고칠 기회, 세 번째에 중단
+    assert INSTANCE not in json.dumps(fake.calls)                                                         # 누출된 입력은 어떤 요청에도 실리지 않는다
+    errs = [b for m in fake.calls[2]["messages"] for b in m["content"] if "toolResult" in b]
+    assert errs and "tool_input_contains_sensitive_value" in json.dumps(errs, ensure_ascii=False)
+
+
+def test_the_model_can_fix_a_tool_input_that_looked_sensitive_and_the_plan_goes_on(world):
+    make, intake, _, _ = world
+    leaky = reboot_steps("<INSTANCE_1>")
+    leaky["steps"][0]["command"] = f"aws ec2 describe-instances --instance-ids {INSTANCE}"
+    agent, fake, _ = make([tools(use("submit_outline", outline("p1"), "a")), tools(use("submit_phase", leaky, "b")),
+                           tools(use("submit_phase", reboot_steps("<INSTANCE_1>"), "c"))])
+    r = agent.run(intake)
+    assert r.status == "plan" and r.plan is not None and INSTANCE not in json.dumps(fake.calls)
+    assert any("tool_input_unsafe" in x for x in r.repair_log)
+
+
+def test_real_values_in_free_text_still_stop_at_once(world):
+    make, intake, _, _ = world
+    agent, fake, _ = make([([{"text": f"인스턴스 {INSTANCE} 를 재부팅하겠다"}], "end_turn")])
+    r = agent.run(intake)
+    assert r.status == "stopped" and r.reasons == ("model_output_unsafe",) and len(fake.calls) == 1        # 글(도구 입력이 아닌)의 누출은 바로 중단
 
 
 def test_truncated_output_is_dropped_and_retried_with_a_shorter_request(world):
@@ -303,6 +325,12 @@ def test_system_prompt_has_no_sensitive_values_and_states_the_core_rules():
         assert phrase in SYSTEM_PROMPT, phrase
 
 
+def test_system_prompt_prefers_kubectl_over_aws_eks_for_status_checks():
+    """사용자 요청: aws eks는 잘 쓰지 않으니 상태 확인·대기는 kubectl을 우선한다."""
+    for phrase in ("도구 선택(중요)", "aws eks`를 거의 쓰지 않는다", "kubectl get nodes -o wide", "kubectl rollout status daemonset/kube-proxy", "5분의 1", "aws autoscaling"):
+        assert phrase in SYSTEM_PROMPT, phrase
+
+
 def test_accepted_phase_compacts_the_conversation_so_input_does_not_keep_growing(world):
     make, intake, _, _ = world
     post = {"steps": [{"id": "post", "kind": "check", "title": "서비스 확인", "checklist": ["동작 확인"]}]}
@@ -323,3 +351,35 @@ def test_accepted_phase_compacts_the_conversation_so_input_does_not_keep_growing
     assert "a-look" in last[-1]["content"][-1]["text"] and "a-reboot" in last[-1]["content"][-1]["text"]      # 앞선 phase는 요약으로 전달
     assert [m["role"] for m in last] == ["user", "assistant", "user", "assistant", "user"]
     assert len(r.token_log) == 5 and r.repair_log and r.repair_log[0].startswith("submit_phase:missing_check")
+
+
+def test_outline_research_is_dropped_after_acceptance_and_replaced_by_summaries(world):
+    make, intake, _, _ = world
+    agent, fake, _ = make([
+        tools(use("search_docs", {"query": "인스턴스 재부팅", "k": 3}, "s")),
+        tools(use("submit_outline", outline("p1", "p2"), "o")),
+        tools(use("submit_phase", reboot_steps(PH, prefix="a-"), "p1")),
+        tools(use("submit_phase", {"steps": [{"id": "post", "kind": "check", "title": "서비스 확인", "checklist": ["동작 확인"]}]}, "p2")),
+    ])
+    r = agent.run(intake)
+    assert r.status == "plan"
+    first_phase_call = json.dumps(fake.calls[2]["messages"], ensure_ascii=False)                  # phase 1을 요청하는 호출
+    assert "untrusted_data" not in first_phase_call and '"id": "s"' not in first_phase_call and '"toolUseId": "s"' not in first_phase_call
+    text = fake.calls[2]["messages"][-1]["content"][-1]["text"]
+    assert "수락된 계획 윤곽" in text and "p1:" in text and "p2:" in text                  # 윤곽 요약
+    assert "aws ec2 reboot-instances" in text and "(mutate)" in text                    # 찾은 문서 명령 요약
+    assert [m["role"] for m in fake.calls[2]["messages"]] == ["user", "assistant", "user"]
+
+
+def test_system_prompt_steers_ami_lookup_to_public_ssm_parameters_not_account_ids():
+    """실측: 모델이 `describe-images --owners 099…`(제작사 공개 계정 ID)를 써서 계정 ID 패턴에 걸려 계획 생성이 멈췄다."""
+    for phrase in ("AMI 찾기", "12자리 숫자(계정 ID)", "SSM 공개 파라미터", "/aws/service/canonical/ubuntu", "ami-amazon-linux-latest"):
+        assert phrase in SYSTEM_PROMPT, phrase
+    assert not find_sensitive(SYSTEM_PROMPT) and not find_secrets(SYSTEM_PROMPT)
+
+
+def test_system_prompt_tells_the_agent_to_use_previous_questions_and_treat_default_as_an_answer():
+    """실사용에서 발견: "기본으로"라고 답했는데 같은 질문을 되풀이했다."""
+    for phrase in ("[이전 질문]", "[추가 정보]", "이미 답한 것은 다시 묻지 않는다", "기본(default) VPC·서브넷·보안 그룹", "isDefault,Values=true", "default-for-az", "\"없음\"이라고 한 선택 항목"):
+        assert phrase in SYSTEM_PROMPT, phrase
+    assert not find_sensitive(SYSTEM_PROMPT) and not find_secrets(SYSTEM_PROMPT)

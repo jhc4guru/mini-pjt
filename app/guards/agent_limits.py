@@ -22,6 +22,7 @@ class GuardLimitError(RuntimeError):
     """제한 위반의 공통 부모. code는 감사 기록용."""
 
     code = "limit"
+    detail = ""           # 중단 원인을 알아보기 위한 부가 정보(도구 이름 등, 값 없음)
 
 
 class ToolNotAllowed(GuardLimitError):
@@ -29,9 +30,22 @@ class ToolNotAllowed(GuardLimitError):
 
 
 class BudgetExceeded(GuardLimitError):
-    def __init__(self, code: str):
+    def __init__(self, code: str, detail: str = ""):
         super().__init__(code)
         self.code = code
+        self.detail = detail
+
+
+class RepeatedCall(GuardLimitError):
+    """같은 도구를 같은 인자로 상한을 넘겨 호출했다. 처음 `MAX_REPEAT_NOTICES`번은 중단하지 않고 모델에게 오류로 알린다."""
+    code = "repeated_call"
+
+    def __init__(self, detail: str = ""):
+        super().__init__("repeated_call")
+        self.detail = detail
+
+
+MAX_REPEAT_NOTICES = 2        # 한 번의 실행에서 반복 호출을 알려 주는 횟수. 넘으면 `BudgetExceeded("repeated_call")`로 중단한다(D-45)
 
 
 class PlanTooLarge(GuardLimitError):
@@ -46,7 +60,7 @@ class SchemaViolation(GuardLimitError):
 class Limits:
     max_tool_calls: int = 30
     max_steps: int = 40            # 에이전트 추론 단계(LLM 호출) 수
-    max_tokens: int = 500_000
+    max_tokens: int = 700_000
     max_seconds: float = 600.0
     max_repeats: int = 2           # 같은 도구·같은 인자 호출을 이 횟수까지만 허용
 
@@ -62,6 +76,7 @@ class AgentBudget:
         self.tool_calls = 0
         self.steps = 0
         self.tokens = 0
+        self.repeat_notices = 0
         self._seen: dict[str, int] = {}
 
     def _check_time(self) -> None:
@@ -78,7 +93,10 @@ class AgentBudget:
         sig = name + json.dumps(args, sort_keys=True, default=str, ensure_ascii=False)
         self._seen[sig] = self._seen.get(sig, 0) + 1
         if self._seen[sig] > self.limits.max_repeats:
-            raise BudgetExceeded("repeated_call")
+            if self.repeat_notices < MAX_REPEAT_NOTICES:         # 알려 주고 한 번 더 기회를 준다(이 호출도 총 호출 수에 들어간다)
+                self.repeat_notices += 1
+                raise RepeatedCall(name)
+            raise BudgetExceeded("repeated_call", detail=name)
 
     def before_step(self) -> None:
         self._check_time()

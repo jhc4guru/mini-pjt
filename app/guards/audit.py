@@ -18,7 +18,7 @@ from pathlib import Path
 from app.config import DATA_DIR
 from app.guards.keyfile import key_path_for, load_or_create_key
 
-STAGES = frozenset({"input", "command", "tool_result", "limits", "execution", "outbound"})
+STAGES = frozenset({"input", "command", "tool_result", "limits", "execution", "outbound", "approval"})
 
 
 class AuditLog:

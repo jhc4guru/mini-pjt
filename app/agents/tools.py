@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
-from app.guards.agent_limits import READ_ONLY_TOOLS, AgentBudget, ToolNotAllowed
+from app.guards.agent_limits import READ_ONLY_TOOLS, AgentBudget, ToolNotAllowed, RepeatedCall
 from app.guards.audit import AuditLog
 from app.guards.boundary import LeakError, assert_outbound_clean
 from app.guards.command_guard import CommandGuard
@@ -63,7 +63,12 @@ class ReadToolbox:
         args = args or {}
         if name not in READ_ONLY_TOOLS:
             raise ToolNotAllowed(f"허용되지 않은 도구: {name}")
-        self._budget.before_tool(name, args)          # 상한 초과는 예외로 전파된다
+        try:
+            self._budget.before_tool(name, args)      # 상한 초과는 예외로 전파된다
+        except RepeatedCall:                          # 같은 호출의 반복은 처음 몇 번은 중단하지 않고 모델에게 알린다(D-45)
+            self._log("tool_result", False, (f"{name}:repeated_call",))
+            return {"ok": False, "error": "repeated_call",
+                    "hint": "같은 호출을 이미 했다. 앞선 결과를 그대로 쓰거나 다른 방법으로 진행하거나 결과를 제출하라. 같은 호출을 또 하면 중단된다."}
         if not isinstance(args, dict):
             return self._err(name, "bad_arguments")
         return self._handlers[name](args)

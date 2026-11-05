@@ -31,9 +31,10 @@ StepKind = Literal["cli", "manual", "iac", "check", "poll"]
 
 
 class PlanInvalid(ValueError):
-    def __init__(self, codes: list[str]):
+    def __init__(self, codes: list[str], detail: tuple[str, ...] = ()):
         super().__init__(", ".join(codes[:8]))
         self.codes = codes
+        self.detail = detail            # 진단용 부가 정보(누출 종류 이름 등, 값 없음)
 
 
 # ---------------- 모델이 만드는 초안 ----------------
@@ -145,8 +146,9 @@ def build_plan(draft: PlanDraft, guard: CommandGuard, masker: Masker, *, iac_man
         " ".join([p.title, p.purpose, p.rollback, p.gate_reason, *p.preconditions] + [
             " ".join([s.title, s.rationale, s.command or "", *s.checklist, s.poll.until if s.poll else ""]) for s in p.steps])
         for p in draft.phases])
-    if leak_kinds(text, masker):                        # 모델 출력에 실제 값이 있으면 계획으로 쓰지 않는다
-        raise PlanInvalid(["model_output_unsafe"])
+    kinds = leak_kinds(text, masker)
+    if kinds:                                           # 모델 출력에 실제 값이 있으면 계획으로 쓰지 않는다(어떤 종류인지는 이름만 남긴다)
+        raise PlanInvalid(["model_output_unsafe"], detail=tuple(kinds))
     try:
         check_plan_size([len(p.steps) for p in draft.phases])
     except PlanTooLarge:

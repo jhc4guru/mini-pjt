@@ -127,3 +127,18 @@ def test_bm25_korean_query_with_glossary_finds_command(retriever):
 def test_filters(retriever):
     r = retriever.search("삭제", method="bm25", k=10, cli="kubectl", kinds={"mutate"})
     assert r.hits and all(h.chunk.cli == "kubectl" and h.chunk.kind == "mutate" for h in r.hits)
+
+
+# ---------------- 사전: 복합어의 "키"는 모호하지 않다(실사용에서 발견: "ssh키는 없음"에 Access Key/S3 Object Key를 되물음) ----------------
+def test_compound_key_terms_are_not_ambiguous_and_a_key_pair_is_not_an_access_key():
+    g = Glossary()
+    for text in ("ssh키는 없음", "SSH 키는 없음", "키 페어는 없이 생성", "키페어 없음", "pem 키로 접속", "액세스 키 점검", "ssh key 없음"):
+        assert not [a for a in g.expand(text).ambiguous if a["alias"] == "키"], text
+    assert [a["alias"] for a in g.expand("키 알려줘").ambiguous] == ["키"]                              # 그냥 "키"는 여전히 되묻는다
+    assert [a["alias"] for a in g.expand("S3 키 지워줘").ambiguous] == ["키"]
+    assert not [a for a in g.expand("ssh키는 없음, 우분투 서버").ambiguous if a["alias"] == "키"]
+    mixed = g.expand("ssh키는 없음, 그런데 키 삭제해줘")                                                 # 복합어와 별개의 "키"가 같이 있으면 그것만 되묻는다
+    assert [a["alias"] for a in mixed.ambiguous] == ["키"]
+    pair = g.expand("키 페어 없이")
+    assert "key-pair" in pair.terms and "access" not in pair.terms and "iam" not in pair.terms          # 키 페어는 EC2 키 페어다
+    assert "access" in g.expand("액세스 키 발급해줘").terms

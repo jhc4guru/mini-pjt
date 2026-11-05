@@ -5,7 +5,7 @@ import pytest
 from pydantic import BaseModel
 
 from app.guards.agent_limits import (
-    AgentBudget, BudgetExceeded, Limits, PlanTooLarge, SchemaViolation, ToolNotAllowed, check_plan_size, validate_structured,
+    MAX_REPEAT_NOTICES, AgentBudget, BudgetExceeded, Limits, PlanTooLarge, RepeatedCall, SchemaViolation, ToolNotAllowed, check_plan_size, validate_structured,
 )
 from app.guards.audit import AuditLog
 from app.guards.boundary import LeakError, assert_outbound_clean
@@ -47,10 +47,27 @@ def test_repeated_identical_calls_are_detected_as_a_loop():
     b = AgentBudget(Limits(max_repeats=2))
     b.before_tool("search_docs", {"q": "같은 질의"})
     b.before_tool("search_docs", {"q": "같은 질의"})
-    with pytest.raises(BudgetExceeded) as e:
+    for _ in range(MAX_REPEAT_NOTICES):                         # 처음 몇 번은 중단하지 않고 알린다(D-45)
+        with pytest.raises(RepeatedCall) as n:
+            b.before_tool("search_docs", {"q": "같은 질의"})
+        assert n.value.code == "repeated_call" and n.value.detail == "search_docs" and not isinstance(n.value, BudgetExceeded)
+    with pytest.raises(BudgetExceeded) as e:                    # 알림 횟수를 넘으면 중단한다
         b.before_tool("search_docs", {"q": "같은 질의"})
-    assert e.value.code == "repeated_call"
+    assert e.value.code == "repeated_call" and e.value.detail == "search_docs"
     b.before_tool("search_docs", {"q": "다른 질의"})          # 인자가 다르면 반복이 아니다
+
+
+def test_repeat_notices_still_count_against_the_total_call_limit():
+    """알림도 호출 수에 들어가므로 같은 호출을 되풀이해도 총 호출 한도에서 반드시 멈춘다."""
+    b = AgentBudget(Limits(max_repeats=1, max_tool_calls=4))
+    b.before_tool("search_docs", {"q": "x"})
+    with pytest.raises(RepeatedCall):
+        b.before_tool("search_docs", {"q": "x"})
+    with pytest.raises(RepeatedCall):
+        b.before_tool("search_docs", {"q": "x"})
+    with pytest.raises(BudgetExceeded) as e:
+        b.before_tool("search_docs", {"q": "x"})
+    assert e.value.code in ("tool_calls_exceeded", "repeated_call")
 
 
 def test_step_token_and_time_caps():
@@ -211,4 +228,4 @@ def test_no_function_has_a_bypass_parameter():
 def test_agent_limit_defaults_are_pinned():
     """기본 한도를 바꾸려면 사용자 승인과 D-26 갱신이 필요하다. 값이 조용히 바뀌지 않게 고정한다."""
     lim = Limits()
-    assert (lim.max_tool_calls, lim.max_steps, lim.max_tokens, lim.max_seconds, lim.max_repeats) == (30, 40, 500_000, 600.0, 2)
+    assert (lim.max_tool_calls, lim.max_steps, lim.max_tokens, lim.max_seconds, lim.max_repeats) == (30, 40, 700_000, 600.0, 2)

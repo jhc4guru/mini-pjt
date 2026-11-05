@@ -1,0 +1,713 @@
+﻿<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DevOps Plan/Apply</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1c2330;--muted:#667085;--line:#d9dde4;--accent:#2457c5;--ok:#1f7a3d;--warn:#a15c00;--bad:#b42318;--code:#f0f2f5;--agent:#1d4ed8;--agentbg:#e7efff;--manual:#b45309;--manualbg:#fff0d9}
+@media (prefers-color-scheme:dark){:root{--bg:#12151b;--card:#1a1f28;--fg:#e6e9ef;--muted:#98a2b3;--line:#2c3441;--accent:#7aa2ff;--ok:#5cc47f;--warn:#e0a458;--bad:#ff7b72;--code:#232a35;--agent:#8fb0ff;--agentbg:#1f2c4d;--manual:#f0b25a;--manualbg:#3d2d14}}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.45 system-ui,-apple-system,"Segoe UI","Malgun Gothic",sans-serif}
+h1{font-size:15px;margin:0}h2{font-size:14px;margin:0 0 6px}h3{font-size:13px;margin:0}
+#shell{display:grid;grid-template-columns:260px minmax(0,1fr) 370px;height:100vh}
+#left,#center,#chat{overflow:auto;min-height:0}
+#left{background:var(--card);border-right:1px solid var(--line);padding:10px}
+#center{padding:12px 14px}
+#right{display:flex;flex-direction:column;min-height:0;background:var(--card);border-left:1px solid var(--line)}
+#chat{flex:1;padding:10px 12px}
+#composer{border-top:1px solid var(--line);padding:8px 12px}
+#tabs{display:none}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin:0 0 10px}
+.row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.muted{color:var(--muted)}.small{font-size:11px}
+.badge{display:inline-block;padding:0 6px;border-radius:9px;border:1px solid var(--line);font-size:11px;line-height:17px;white-space:nowrap}
+.b-ok{color:var(--ok);border-color:var(--ok)}.b-warn{color:var(--warn);border-color:var(--warn)}.b-bad{color:var(--bad);border-color:var(--bad)}.b-acc{color:var(--accent);border-color:var(--accent)}.b-man{color:var(--manual);border-color:var(--manual)}
+.actor{font:600 10px ui-monospace,Consolas,monospace;padding:1px 5px;border-radius:3px;letter-spacing:.02em;white-space:nowrap}
+.actor.agent{color:var(--agent);background:var(--agentbg)}.actor.manual{color:var(--manual);background:var(--manualbg)}
+button{font:inherit;font-size:12px;padding:3px 9px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{color:var(--bad);border-color:var(--bad)}
+button.small{padding:1px 7px;font-size:11px}
+button:disabled{opacity:.5;cursor:default}
+input,textarea,select{font:inherit;font-size:12px;padding:4px 7px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);max-width:100%}
+textarea{width:100%;min-height:54px}
+pre,code{font-family:ui-monospace,Consolas,monospace;font-size:11.5px}
+pre{background:var(--code);padding:6px 8px;border-radius:6px;overflow:auto;max-height:240px;margin:5px 0;white-space:pre-wrap;word-break:break-all}
+.toast{position:fixed;right:14px;bottom:14px;background:var(--fg);color:var(--bg);padding:7px 11px;border-radius:6px;max-width:80vw;z-index:9;font-size:12px}
+.banner{padding:5px 9px;border-radius:6px;margin:0 0 10px;background:var(--code)}
+ul{margin:3px 0;padding-left:18px}
+label{display:block}
+/* 좌측 */
+.hitem{display:flex;gap:4px;align-items:flex-start;border-radius:6px;padding:5px;cursor:pointer}
+.hitem:hover,.hitem.active{background:var(--code)}
+.hmain{flex:1;min-width:0}
+.htitle{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+.hitem .x{border:none;background:none;color:var(--muted);padding:0 4px;font-size:15px}
+.sec{margin:12px 4px 5px;font-size:11px;color:var(--muted);font-weight:600}
+/* 이력: 한 줄 + 오른쪽 끝 상태 점 */
+.hline{display:flex;align-items:center;gap:6px;border-radius:6px;padding:5px 6px;cursor:pointer}
+.hline:hover,.hline.active{background:var(--code)}
+.hline .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hline .x{border:none;background:none;color:var(--muted);padding:0 3px;font-size:14px;visibility:hidden}
+.hline:hover .x{visibility:visible}
+.dot{width:10px;height:10px;border-radius:50%;flex:none;display:inline-block}
+.dot.plan{background:#e0a800}.dot.live{background:#22a447;animation:blink 1.1s ease-in-out infinite}.dot.livewait{background:#e0a800;animation:blink 1.1s ease-in-out infinite}
+.dot.paused{background:#e8590c}.dot.done{background:#2f6fde}.dot.aborted{background:#8a919e}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+.lg{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted);margin:2px 4px}
+/* 절차 줄의 승인(체크)·실행(액션) 아이콘 */
+.ico{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 3px;border-radius:5px;border:1px solid var(--line);background:var(--card);font-size:13px;line-height:1;color:var(--fg)}
+button.ico{cursor:pointer}
+button.ico:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.ico.ok{color:var(--ok);border-color:var(--ok)}.ico.bad{color:var(--bad);border-color:var(--bad)}.ico.run{color:var(--accent);border-color:var(--accent)}.ico.mute{color:var(--muted)}
+.ico.act{color:var(--accent);border-color:var(--accent)}
+.icos{display:inline-flex;gap:3px;flex:none}
+/* 실행 로그: 터미널 형태 */
+.termwrap{margin-top:10px}
+.term{display:flex;flex-direction:column-reverse;max-height:340px;overflow:auto;background:#0d1117;color:#c9d1d9;border-radius:6px;border:1px solid #30363d}
+.term-in{padding:8px 10px;font:11.5px/1.5 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-all}
+.term-h{color:#8b949e;margin-top:8px}.term-h:first-child{margin-top:0}.term-cmd{color:#7ee787}.term-out{color:#c9d1d9}.term-err{color:#ff7b72}.term-ok{color:#3fb950}.term-bad{color:#ff7b72}
+/* 중앙 */
+.ctabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin:0 0 10px}
+.ctab{border:none;border-bottom:2px solid transparent;border-radius:0;padding:5px 14px;background:none;font-size:13px}
+.ctab.on{border-bottom-color:var(--accent);color:var(--accent);font-weight:600}
+.phase{margin:12px 0 0}.phase>.head{display:flex;gap:6px;flex-wrap:wrap;align-items:center;border-bottom:1px solid var(--line);padding-bottom:3px}
+.srow{display:flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:6px;padding:4px 7px;margin:5px 0 0;background:var(--card);cursor:pointer;font-size:12.5px}
+.srow.sel{border-color:var(--accent)}
+.srow.over{border-top:3px solid var(--accent)}
+.srow.s-done{border-left:4px solid var(--ok)}.srow.s-failed{border-left:4px solid var(--bad)}.srow.s-running,.srow.s-approved,.srow.s-awaiting_report,.srow.s-awaiting_confirm{border-left:4px solid var(--accent)}
+.grip{cursor:grab;color:var(--muted);user-select:none;padding:0 2px}
+.stitle{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.detail{border:1px solid var(--accent);border-top:none;border-radius:0 0 6px 6px;padding:7px 9px;margin:0 0 3px;background:var(--card)}
+.dropend{height:12px}.dropend.over{border-top:3px solid var(--accent)}
+.legend{display:flex;gap:10px;align-items:center;margin:2px 0 6px}
+/* 우측 대화 */
+.bubble{border:1px solid var(--line);border-radius:10px;padding:6px 10px;margin:0 0 8px;max-width:94%}
+.bubble.user{margin-left:auto;background:var(--code)}
+.pane-title{font-weight:600;margin:0 0 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:1000px){
+#shell{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
+#tabs{display:flex;border-bottom:1px solid var(--line);background:var(--card)}
+#tabs button{flex:1;border:none;border-radius:0;padding:9px;font-size:13px}
+#tabs button.on{border-bottom:2px solid var(--accent);color:var(--accent)}
+#left,#center,#right{display:none;border:none}
+#shell.tab-left #left,#shell.tab-center #center{display:block}
+#shell.tab-right #right{display:flex}
+}
+</style>
+</head>
+<body>
+<div id="shell" class="tab-center">
+  <div id="tabs"><button data-tab="left">작업</button><button data-tab="center">절차</button><button data-tab="right">대화</button></div>
+  <aside id="left"></aside>
+  <main id="center"></main>
+  <section id="right"><div id="chat"></div><footer id="composer"></footer></section>
+</div>
+<script>
+"use strict";
+// ---- 작은 DOM 도우미: 데이터는 항상 텍스트 노드로만 넣는다(모델·실행 출력에 HTML이 있어도 해석되지 않는다) ----
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "value") el.value = v;
+    else el.setAttribute(k, v === true ? "" : String(v));
+  }
+  for (const kid of kids.flat()) {
+    if (kid === null || kid === undefined || kid === false) continue;
+    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+const $shell = document.getElementById("shell"), $left = document.getElementById("left"), $center = document.getElementById("center"),
+      $chat = document.getElementById("chat"), $comp = document.getElementById("composer");
+
+const LABEL = {
+  state: {draft:"계획 생성 전", plan_review:"plan 검토", plan_approved:"plan 승인됨", applying:"apply 진행", paused:"일시정지", completed:"완료", aborted:"중단됨"},
+  step: {pending:"대기", approved:"승인됨", running:"실행 중", awaiting_report:"실행 완료 보고 대기", awaiting_confirm:"확인 대기", done:"완료", failed:"실패", skipped:"건너뜀", aborted:"중단됨"},
+  op: {read:"읽기", mutate:"변경", manual:"수동 실행", none:"실행 없음"},
+  kind: {cli:"CLI", manual:"수동", iac:"IaC", check:"체크", poll:"폴링"},
+  risk: {low:"위험 낮음", medium:"위험 중간", high:"위험 높음"},
+  flag: {open_cidr:"전체 개방(0.0.0.0/0)", wide_cidr:"넓은 CIDR", wildcard_principal:"와일드카드 Principal", wildcard_action:"와일드카드 Action", admin_policy:"관리자 정책",
+    recursive_delete:"재귀 삭제", sync_delete:"sync --delete", delete_all:"전체 삭제", namespace_delete:"네임스페이스 삭제", public_access_relax:"퍼블릭 접근 완화",
+    public_acl:"공개 ACL", multiple_targets:"다중 대상", prod_target:"prod 대상", fallback:"문서 근거 없음", unknown_impact:"영향 불명", iac_drift:"IaC 코드와 어긋날 수 있음",
+    scale_to_zero:"replicas=0", policy_unreadable:"정책 파일을 읽을 수 없음", user_data_script:"user-data 스크립트", negated_element:"NotAction/NotResource 등 부정 요소"},
+  req: {open_cidr_confirm:"전체 개방: 요청자의 사유 입력 + 다른 사람의 확인", strong_warning:"강한 경고: 다른 사람의 확인", dry_run_first:"같은 명령의 dry-run을 먼저 실행해야 함",
+    prod_warning:"prod 대상: 다른 사람의 확인", fallback_approval:"AI 추정: 다른 사람의 승인", show_file_contents:"파일 내용 확인: 다른 사람의 확인"},
+  code: {requester_cannot_approve_plan:"요청자는 plan을 승인할 수 없습니다.", requester_cannot_approve_change:"요청자는 변경 step을 승인할 수 없습니다.",
+    plan_hash_mismatch:"화면의 plan과 서버의 plan이 다릅니다. 새로 고침하세요.", stale_plan_version:"더 새로운 plan 버전이 있습니다.", not_a_participant:"참여자가 아닙니다.",
+    gate_not_approved:"게이트 승인이 필요합니다.", previous_phase_incomplete:"앞 phase가 끝나지 않았습니다.", state_check_required:"적용됐을 수 있어 상태 확인 보고가 필요합니다.",
+    retry_limit_reached:"재시도 횟수 상한에 도달했습니다.", requester_cannot_skip:"요청자는 건너뛸 수 없습니다.", requester_cannot_confirm:"요청자는 이 항목을 확인할 수 없습니다.",
+    report_by_requester_only:"요청자만 실행 완료를 보고할 수 있습니다.", requester_cannot_confirm_report:"요청자는 보고를 확인할 수 없습니다.", checklist_incomplete:"체크리스트를 모두 표시해야 합니다.",
+    plan_edit_not_allowed:"apply 중에는 수정할 수 없습니다. 먼저 일시정지하세요.", plan_invalid:"수정한 계획이 검증을 통과하지 못했습니다.", input_rejected:"입력이 차단되었습니다.",
+    internal_error:"서버 오류가 발생했습니다.", message_too_large:"메시지가 너무 큽니다.", title_required:"작업 제목을 입력하세요.", invite_by_requester_only:"초대 링크는 요청자만 만들 수 있습니다.",
+    answer_by_requester_only:"요청자만 답할 수 있습니다.", answer_not_expected:"지금은 답을 받지 않습니다.", conversation_too_long:"대화가 길어졌습니다. 새 작업으로 시작하세요.",
+    missing_check:"변경 명령에는 확인(읽기) 명령이 필요합니다.", blocked_command:"명령 가드가 막은 명령입니다.", unknown_or_forward_reference:"순서나 참조가 맞지 않습니다.",
+    duplicate_step_id:"같은 id의 절차가 있습니다.", input_blocked:"입력이 차단되었습니다(비밀값·지시문 등).", locked_step_changed:"완료된 절차는 바꿀 수 없습니다.",
+    locked_step_removed:"완료된 절차는 지울 수 없습니다.", locked_step_reordered:"완료된 절차의 순서는 바꿀 수 없습니다.", locked_step_moved:"완료된 절차는 옮길 수 없습니다.",
+    retry_by_requester_only:"요청자만 다시 시도할 수 있습니다.", retry_not_expected:"지금은 다시 시도할 수 없습니다(중단된 작업만 가능).", confirm_not_allowed:"이 절차는 확인만으로 진행할 수 없습니다(승인이 필요합니다)."},
+};
+const lab = (map, k) => LABEL[map][k] || k;
+const codeText = c => { const base = String(c).split(":")[0]; return LABEL.code[c] || LABEL.code[base] || c; };
+// 실행 주체: 서버(에이전트)가 실행하면 AGENT, 사람이 자기 터미널·코드에서 하면 MANUAL
+const actorOf = s => (s.op === "read" || s.op === "mutate") ? "AGENT" : "MANUAL";
+const OPCLASS = {read:"b-ok", mutate:"b-bad", manual:"b-man", none:"b-man"};
+
+// ---- 상태 ----
+// 브라우저에는 자격(세션 id, 닉네임, 멤버 토큰)만 둔다. 제목·상태·결과 같은 이력의 내용은 모두 서버 DB에서 읽는다.
+// 이 탭이 보고 있는 항목은 sessionStorage에 둔다(탭마다 다른 닉네임으로 같은 서버를 열어 4-eyes를 확인할 수 있게).
+const S = { sid:null, token:null, nick:null, ws:null, view:null, pending:null, drafts:{}, conn:"끊김", newTask:false, history:[], sel:null, tab:"center", ctab:"plan",
+            invite:null, addAt:null, busy:false, drag:null, lastHist:0, autoOff:false, act:{} };
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  sget(k) { try { return JSON.parse(sessionStorage.getItem(k) || "null"); } catch { return null; } },
+  sset(k, v) { try { v === null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+function creds() {
+  const l = store.get("creds", null);
+  if (l) return l;
+  return store.get("hist", []).map(e => ({sid:e.sid, nick:e.nick, token:e.token}));       // 이전 버전의 저장 형식에서 이어받기
+}
+function addCred(c) { store.set("creds", [c, ...creds().filter(x => !(x.sid === c.sid && x.nick === c.nick))].slice(0, 50)); }
+function dropCred(sid, nick) { store.set("creds", creds().filter(x => !(x.sid === sid && x.nick === nick))); }
+function toast(msg) { const t = h("div", {class:"toast"}, msg); document.body.append(t); setTimeout(() => t.remove(), 5000); }
+
+// ---- 통신 ----
+async function api(path, body) {
+  const r = await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { const d = j.detail || {}; throw new Error(d.message || codeText(d.code || r.status)); }
+  return j;
+}
+async function loadHistory() {
+  const items = creds();
+  if (!items.length) { S.history = []; return renderLeft(); }
+  try {
+    const r = await api("/api/history", {items:items.map(c => ({sid:c.sid, token:c.token}))});
+    const gone = r.items.filter(i => !i.valid).map(i => i.sid);
+    if (gone.length) store.set("creds", creds().filter(c => !gone.includes(c.sid)));      // 서버에 없는 세션의 자격은 지운다
+    S.history = r.items.filter(i => i.valid).map(i => ({...i, token:(items.find(c => c.sid === i.sid && c.nick === i.nick) || {}).token}));
+  } catch { /* 서버에 닿지 않으면 이전 목록을 둔다 */ }
+  renderLeft();
+}
+function closeWs() { if (S.ws) { try { S.ws.onclose = null; S.ws.close(); } catch {} } S.ws = null; }
+function openSession(c) {
+  closeWs();
+  Object.assign(S, {sid:c.sid, token:c.token, nick:c.nick, view:null, pending:null, conn:"연결 중", newTask:false, sel:null, invite:null, addAt:null, autoOff:false, ctab:"plan"});
+  store.sset("active", {sid:c.sid, nick:c.nick});
+  connect(); render();
+}
+function startNewTask() {
+  closeWs();
+  Object.assign(S, {sid:null, token:null, nick:null, view:null, pending:null, newTask:true, sel:null, invite:null, addAt:null, tab:"center", ctab:"plan"});
+  store.sset("active", null); render();
+}
+function connect() {
+  const sid = S.sid;
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/" + sid);
+  S.ws = ws; S.conn = "연결 중";
+  ws.onopen = () => ws.send(JSON.stringify({type:"auth", token:S.token}));
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "view") { S.conn = "연결됨"; setView(m.data); }
+    else if (m.type === "result") {
+      if (m.invite) { S.invite = location.origin + "/?s=" + S.sid + "&i=" + m.invite; renderCenter(); }
+      if (!m.ok) toast(codeText(m.code) + (m.message ? " — " + m.message : "") + (m.codes ? " (" + m.codes.slice(0, 3).map(codeText).join(", ") + ")" : ""));
+    }
+  };
+  ws.onclose = ev => {
+    if (S.sid !== sid) return;
+    S.conn = "끊김";
+    if (ev.code === 4401) toast("인증에 실패했습니다. 왼쪽 이력에서 지우고 다시 참여하세요.");
+    else setTimeout(() => S.sid === sid && connect(), 2000);
+    render();
+  };
+}
+function send(msg) { if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(msg)); else toast("서버와 연결되어 있지 않습니다."); }
+const typing = () => { const a = document.activeElement; return a && ["INPUT", "TEXTAREA", "SELECT"].includes(a.tagName) && ($center.contains(a) || $chat.contains(a) || $comp.contains(a)); };
+function adopt(v) {
+  const prev = S.view;
+  S.view = v; S.pending = null; S.act = {};                       // 새 상태가 오면 눌러 둔 아이콘의 "진행 중" 표시를 푼다
+  if (!prev || prev.session.id !== v.session.id) S.ctab = ["applying", "paused", "completed"].includes(v.session.state) ? "apply" : "plan";
+  else if (prev.session.state !== "applying" && v.session.state === "applying") S.ctab = "apply";         // apply가 시작되면 Apply 탭으로 넘어간다
+  render();
+}
+function setView(v) {
+  if (Date.now() - S.lastHist > 3000) { S.lastHist = Date.now(); loadHistory(); }       // 상태가 바뀌면 왼쪽 이력(결과 요약)도 갱신
+  if (typing()) { S.pending = v; return; }                                             // 입력 중에는 화면을 다시 그리지 않는다(입력이 사라지지 않게)
+  adopt(v);
+}
+document.addEventListener("focusout", () => setTimeout(() => { if (S.pending && !typing()) adopt(S.pending); }, 0));
+
+// ---- 전체 그리기 ----
+function render() {
+  $shell.className = "tab-" + S.tab;
+  for (const b of document.querySelectorAll("#tabs button")) b.className = b.getAttribute("data-tab") === S.tab ? "on" : "";
+  renderLeft(); renderCenter(); renderChat(); renderComposer();
+}
+const keep = (el, fn) => { const top = el.scrollTop, bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120; fn(); el.scrollTop = bottom && el === $chat ? el.scrollHeight : top; };
+
+// ---- 좌측: 새 작업, 작업 이력(DB) ----
+// 이력의 상태 점: PLAN 작성 중·Apply 대기(노랑) / APPLY 진행 중(초록 깜빡임, 작업자 초대 완료) / 일시정지(주황) / APPLY 완료(파랑) / 중단(회색)
+function dotOf(e) {
+  const st = e.state, invited = (e.participants || 1) >= 2;
+  if (st === "applying") return invited ? ["live", "APPLY 진행 중 (작업자 초대 완료)"] : ["livewait", "APPLY 진행 중 (작업자 초대 필요)"];
+  if (st === "paused") return ["paused", "APPLY 일시정지"];
+  if (st === "completed") return ["done", "APPLY 작업 완료"];
+  if (st === "aborted") return ["aborted", "중단됨"];
+  return ["plan", st === "plan_approved" ? "PLAN 완료 · APPLY 대기" : "PLAN 작성 중"];
+}
+function renderLeft() {
+  const kids = [h("button", {class:"primary", style:"width:100%", onclick: startNewTask}, "＋ 새 작업")];
+  kids.push(h("div", {class:"sec"}, "작업 이력"));
+  if (!S.history.length) kids.push(h("div", {class:"small muted", style:"margin:4px"}, "아직 작업이 없습니다."));
+  for (const e of S.history) {
+    const c = e.steps || {}, [cls, label] = dotOf(e);
+    const tip = [e.title, label, "요청자 " + e.requester + " · 내 닉네임 " + e.nick + " · 작업자 " + (e.participants || 1) + "명",
+      Object.keys(c).length ? ["done", "failed", "skipped", "pending"].filter(k => c[k]).map(k => lab("step", k) + " " + c[k]).join(" · ") : "절차 없음", e.risk ? lab("risk", e.risk) : "", new Date(e.updated_at * 1000).toLocaleString()].filter(Boolean).join("\n");
+    kids.push(h("div", {class:"hline" + (e.sid === S.sid && e.nick === S.nick ? " active" : ""), title:tip, onclick: () => openSession(e)},
+      h("span", {class:"t"}, e.title),
+      h("button", {class:"x", title:"이 브라우저의 목록에서만 지웁니다(서버 기록은 그대로)", onclick: ev => { ev.stopPropagation(); dropCred(e.sid, e.nick); if (e.sid === S.sid && e.nick === S.nick) startNewTask(); loadHistory(); }}, "×"),
+      h("span", {class:"dot " + cls, "aria-label":label})));
+  }
+  kids.push(h("div", {class:"sec"}, "상태"),
+    ...[["plan", "PLAN 작성 중 · APPLY 대기"], ["live", "APPLY 진행 중(작업자 초대 완료)"], ["paused", "APPLY 일시정지"], ["done", "APPLY 작업 완료"], ["aborted", "중단됨"]].map(([c, t]) => h("div", {class:"lg"}, h("span", {class:"dot " + c}), t)));
+  kids.push(h("div", {class:"small muted", style:"margin:12px 4px"}, "제목·상태·결과는 서버 DB에서 읽습니다. 이 브라우저에는 접속 자격(토큰)만 저장됩니다."));
+  $left.replaceChildren(...kids);
+}
+
+// ---- 중앙: 제목 · 작업자 · Plan / Apply 탭 ----
+const applyVisible = v => !!v.plan && (["applying", "paused", "completed"].includes(v.session.state) ||        // plan이 승인되어도 apply를 진행하기 전에는 Apply 탭이 없다
+  (v.session.state === "aborted" && Object.values(v.steps || {}).some(x => x.state !== "pending")));
+const effTab = v => (S.ctab === "apply" && applyVisible(v)) ? "apply" : "plan";
+const planEditable = v => ["plan_review", "plan_approved", "paused"].includes(v.session.state);
+
+function renderCenter() {
+  keep($center, () => {
+    $center.replaceChildren();
+    const q = new URLSearchParams(location.search), js = q.get("s"), ji = q.get("i");
+    if (!S.sid) {
+      if (js && ji && !S.newTask) $center.append(joinPanel(js, ji));
+      else if (S.newTask) $center.append(newTaskPanel());
+      else $center.append(welcome());
+      return;
+    }
+    const v = S.view;
+    if (!v) { $center.append(h("div", {class:"banner"}, "연결 중입니다… (" + S.conn + ")")); return; }
+    $center.append(headerPanel(v));
+    if (!v.plan) { $center.append(h("div", {class:"card muted"}, v.session.state === "draft" ? "아직 절차가 없습니다. 오른쪽 대화에서 작업을 설명하거나 추가 정보를 알려 주세요." : "절차가 없습니다.")); }
+    else {
+      const tab = effTab(v);
+      if (tab === "apply" && !S.sel && !S.autoOff && ["applying", "paused"].includes(v.session.state)) {          // apply 중에는 지금 처리할 차례인 절차를 자동으로 펼친다
+        const next = v.plan.phases.flatMap(p => p.steps).find(x => !["done", "skipped", "aborted"].includes((v.steps[x.id] || {}).state));
+        if (next) S.sel = next.id;
+      }
+      $center.append(...[h("div", {class:"ctabs"}, h("button", {class:"ctab" + (tab === "plan" ? " on" : ""), onclick: () => { S.ctab = "plan"; renderCenter(); }}, "Plan"),
+        applyVisible(v) ? h("button", {class:"ctab" + (tab === "apply" ? " on" : ""), onclick: () => { S.ctab = "apply"; renderCenter(); }}, "Apply") : null),
+        v.review && tab === "plan" ? reviewPanel(v) : null, tab === "plan" ? planView(v) : applyView(v)].filter(Boolean));       // append(null)은 "null" 글자를 찍으므로 거른다
+    }
+    $center.append(logPanel(v));
+  });
+}
+function welcome() {
+  return h("div", {class:"card"}, h("h1", {}, "DevOps Plan/Apply"),
+    h("p", {class:"muted"}, "왼쪽에서 지난 작업을 열거나 ‘＋ 새 작업’을 시작하세요. 작업 설명은 오른쪽 대화에 입력하면, 문서에 근거한 절차 목록이 여기에 만들어지고 두 사람이 승인한 뒤 실행합니다(Phase 1은 mock 환경입니다)."),
+    h("ul", {class:"small muted"}, h("li", {}, "요청에 비밀번호·키·토큰을 쓰지 마세요(입력이 차단됩니다)."), h("li", {}, "리소스 ID·IP·이름은 모델에 보내기 전에 자동으로 가려집니다.")));
+}
+function newTaskPanel() {
+  const title = h("input", {id:"newtitle", placeholder:"작업 제목(예: dev-main EKS 1.36 업그레이드)", maxlength:60, style:"width:100%", value:S.drafts.title || ""});
+  title.addEventListener("input", () => S.drafts.title = title.value);
+  const nick = h("input", {id:"newnick", placeholder:"닉네임", maxlength:20, style:"width:160px", value:S.drafts.nick || store.get("nick", "")});
+  nick.addEventListener("input", () => S.drafts.nick = nick.value);
+  const iac = h("input", {type:"checkbox", id:"newiac"});
+  iac.addEventListener("change", () => S.drafts.iac = iac.checked);
+  if (S.drafts.iac) iac.setAttribute("checked", "");
+  return h("div", {class:"card"}, h("h2", {}, "새 작업"),
+    h("p", {class:"small muted"}, "제목을 정하고, 오른쪽 대화에 하고 싶은 작업을 입력하면 이 제목으로 저장되고 절차 목록이 만들어집니다. 작업마다 대화와 절차가 따로입니다."),
+    h("div", {class:"row", style:"margin-bottom:8px"}, title), h("div", {class:"row"}, nick),
+    h("label", {style:"margin-top:8px"}, iac, " 인프라를 Terraform(IaC)으로 관리합니다(CLI 변경 뒤 코드 동기화 step을 넣습니다)"));
+}
+function joinPanel(sid, inv) {
+  const nick = h("input", {placeholder:"닉네임(영문·숫자·한글·_·-, 20자)", maxlength:20, value:S.drafts.nick || store.get("nick", "")});
+  nick.addEventListener("input", () => S.drafts.nick = nick.value);
+  return h("div", {class:"card"}, h("h2", {}, "초대받은 작업에 참여"), h("div", {class:"row"}, nick,
+    h("button", {class:"primary", onclick: async () => {
+      try { const r = await api("/api/sessions/" + sid + "/join", {invite:inv, nick:nick.value});
+        store.set("nick", nick.value); history.replaceState({}, "", "/");
+        const c = {sid, nick:nick.value, token:r.member_token}; addCred(c); openSession(c); loadHistory();
+      } catch (e) { toast(e.message); } }}, "참여")));
+}
+
+// 제목 아래: 상태 배지, 작업자, 초대 링크(작업마다 따로이므로 제목 아래에 둔다)
+function headerPanel(v) {
+  const s = v.session, you = v.you, r = v.review && v.review.facts;
+  const kids = [h("div", {class:"row"}, h("h1", {}, s.title || "(제목 없음)"), h("span", {class:"badge b-acc"}, lab("state", s.state)),
+      r ? h("span", {class:"badge " + (r.risk_level === "high" ? "b-bad" : r.risk_level === "medium" ? "b-warn" : "b-ok")}, "위험 등급: " + lab("risk", r.risk_level) + " (서버 규칙)") : null,
+      h("span", {class:"badge" + (S.conn === "연결됨" ? " b-ok" : " b-warn")}, S.conn))];
+  const people = [h("span", {class:"small muted"}, "작업자")];
+  for (const p of v.participants) people.push(h("span", {class:"badge" + (p.nick === you.nick ? " b-acc" : "")}, "● " + p.nick + (p.role === "requester" ? " (요청자)" : " (승인자)") + (p.nick === you.nick ? " ← 나" : "")));
+  if (you.role === "requester" && !["completed", "aborted"].includes(s.state)) people.push(h("button", {class:"small", title:"새로 만들면 이전 링크는 쓸 수 없습니다", onclick: () => send({type:"create_invite"})}, "초대 링크 만들기"));
+  kids.push(h("div", {class:"row", style:"margin-top:5px"}, people));
+  if (S.invite && you.role === "requester") kids.push(h("div", {class:"row", style:"margin-top:4px"}, h("input", {readonly:true, value:S.invite, style:"flex:1;min-width:200px", onclick: ev => ev.target.select()}),
+    h("button", {class:"small", onclick: () => navigator.clipboard.writeText(S.invite).then(() => toast("초대 링크를 복사했습니다"), () => toast("복사하지 못했습니다. 직접 선택해 복사하세요."))}, "복사")));
+  return h("div", {class:"card"}, kids);
+}
+
+function reviewPanel(v) {
+  const r = v.review;
+  const f = r.facts, warns = f.checklist.filter(i => i.status === "warn"), infos = f.checklist.filter(i => i.status !== "warn");
+  const kids = [h("summary", {}, h("b", {}, "리뷰"), " — 주의 " + warns.length + "건" + (r.summary ? " · AI 요약 있음" : ""))];
+  if (warns.length) kids.push(h("ul", {}, warns.map(i => h("li", {}, h("b", {}, "⚠ "), i.message + (i.phase ? " [" + i.phase + "]" : "") + (i.detail ? " — " + i.detail : "") + (i.steps && i.steps.length ? " (" + i.steps.join(", ") + ")" : "")))));
+  if (infos.length) kids.push(h("ul", {class:"small muted"}, infos.map(i => h("li", {}, i.message))));
+  if (r.summary) kids.push(h("div", {class:"banner"}, h("div", {class:"small muted"}, "AI 요약(참고용 — 위험 등급과 체크리스트는 서버 규칙이 정합니다)"), h("b", {}, r.headline || ""), h("div", {}, r.summary),
+    r.attention && r.attention.length ? h("ul", {}, r.attention.map(a => h("li", {}, a))) : null));
+  else if (r.reasons && r.reasons.length) kids.push(h("div", {class:"small muted"}, "AI 요약 없음(" + r.reasons.join(", ") + "). 체크리스트만 참고하세요."));
+  return h("details", {class:"card"}, kids);                                  // 리뷰는 기본으로 접어 둔다(위험 등급은 위 헤더에 이미 보인다)
+}
+const legend = () => h("div", {class:"legend small muted"}, h("span", {class:"actor agent"}, "[AGENT]"), "서버가 실행", h("span", {class:"actor manual"}, "[MANUAL]"), "사람이 직접 실행(코드 변경·터미널·체크)");
+
+// ---- Plan 탭: 검토·수정·승인 ----
+function planView(v) {
+  const plan = v.plan, st = v.session.state, editable = planEditable(v), isReq = v.you.role === "requester";
+  const kids = [h("div", {class:"row", style:"justify-content:space-between"}, h("div", {class:"pane-title"}, "Plan — 절차 검토"),
+    h("span", {class:"small muted"}, "v" + v.version + " · " + (v.plan_status === "approved" ? "승인·해시 잠금" : v.plan_status === "superseded" ? "대체됨" : "검토 중") + " · 해시 " + v.plan_hash.slice(0, 12))), h("p", {class:"small"}, plan.summary)];
+  const acts = [];
+  if (st === "plan_review") acts.push(h("button", {class:"primary", disabled: isReq, title: isReq ? "요청자는 승인할 수 없습니다" : "", onclick: () => send({type:"approve_plan", version:v.version, hash:v.plan_hash})}, "plan 일괄 승인"),
+    isReq ? h("span", {class:"small muted"}, "다른 작업자가 승인해야 합니다.") : null);
+  if (st === "plan_approved") acts.push(h("button", {class:"primary", onclick: () => { S.ctab = "apply"; send({type:"start_apply"}); }}, "apply 진행 →"),
+    h("span", {class:"small muted"}, "plan이 승인되었습니다. 진행하면 Apply 탭에서 절차별로 실행합니다. 지금 고치면 승인이 풀립니다."));
+  if (st === "paused") acts.push(h("span", {class:"small muted"}, "일시정지 중입니다. 남은 절차를 고친 뒤 다시 승인받으면 이어서 진행합니다(완료된 절차는 바꿀 수 없습니다)."));
+  if (acts.length) kids.push(h("div", {class:"row", style:"margin:4px 0 6px"}, acts));
+  if (plan.warnings && plan.warnings.length) kids.push(h("div", {class:"small muted"}, "서버 경고: " + plan.warnings.join(", ")));
+  kids.push(legend());
+  if (editable) kids.push(h("div", {class:"small muted"}, "절차를 끌어서(⋮⋮) 같은 phase 안에서 순서를 바꾸고, 각 줄의 ＋로 그 뒤에 절차를 끼워 넣을 수 있습니다. 절차를 눌러 내용을 보거나 수정·삭제합니다."));
+  for (const ph of plan.phases) kids.push(phaseView(v, ph, "plan", editable));
+  return h("div", {class:"card"}, kids);
+}
+
+// ---- Apply 탭: 같은 절차를 수정 없이 승인·확인·실행 ----
+function applyView(v) {
+  const plan = v.plan, st = v.session.state;
+  const kids = [h("div", {class:"row", style:"justify-content:space-between"}, h("div", {class:"pane-title"}, "Apply — 절차 실행"),
+    h("span", {class:"small muted"}, "plan v" + v.version + " 승인본 · 수정 불가 · 해시 " + v.plan_hash.slice(0, 12)))];
+  const acts = sessionButtons(v);
+  if (acts.length) kids.push(h("div", {class:"row", style:"margin:4px 0 6px"}, acts));
+  kids.push(h("div", {class:"small muted"}, "변경 절차는 요청자가 아닌 사람의 승인 후 실행하고, 읽기(조회·사전 점검) 절차는 ‘확인’ 한 번으로 진행합니다. 실행하면 확인 절차가 자동으로 이어집니다."), legend());
+  for (const ph of plan.phases) kids.push(phaseView(v, ph, "apply", false));
+  kids.push(terminalPanel(v));
+  return h("div", {class:"card"}, kids);
+}
+// 실행 로그와 CLI 결과를 터미널처럼 시간 순서로 보여 준다: 헤더(시각·주체·절차·결과), $ 명령, 출력. 값은 화면에서만 실제 값으로 복원된다.
+function terminalPanel(v) {
+  const steps = Object.fromEntries(v.plan.phases.flatMap(p => p.steps).map(x => [x.id, x]));
+  const outs = (v.outputs || []).filter(o => !String(o.status).startsWith("preview"));
+  const lines = [];
+  for (const o of outs) {
+    const s = steps[o.step_id] || {}, who = actorOf(s), ok = o.status === "ok" || String(o.status).startsWith("poll:") || o.status === "reported";
+    lines.push(h("div", {class:"term-h"}, "── " + new Date(o.ts * 1000).toLocaleTimeString() + "  [" + who + "] " + o.step_id +
+      (String(o.status).startsWith("poll:") ? "  폴링 #" + o.status.split(":")[1] : "") + "  ", h("span", {class:ok ? "term-ok" : "term-bad"}, (ok ? "✔ " : "✖ ") + o.status + (o.exit_code !== null && o.exit_code !== undefined ? " (exit " + o.exit_code + ")" : ""))));
+    if (s.command && who === "AGENT") lines.push(h("div", {class:"term-cmd"}, "$ " + s.command));
+    if (o.status === "reported" || o.status === "reported_failed") lines.push(h("div", {class:"term-out"}, "(사람이 보고) "));
+    if (o.text) lines.push(h("div", {class:ok ? "term-out" : "term-err"}, o.text));
+  }
+  return h("div", {class:"termwrap"}, h("div", {class:"pane-title"}, "실행 로그 · CLI 결과 (터미널)"),
+    lines.length ? h("div", {class:"term"}, h("div", {class:"term-in"}, ...lines)) : h("div", {class:"small muted"}, "아직 실행 기록이 없습니다. 절차의 ▶를 누르면 명령과 결과가 여기에 쌓입니다."));
+}
+function sessionButtons(v) {
+  const st = v.session.state, out = [];
+  if (st === "plan_approved") out.push(h("button", {class:"primary", onclick: () => send({type:"start_apply"})}, "apply 시작"));
+  if (st === "paused") out.push(h("button", {class:"primary", onclick: () => send({type:"start_apply"})}, "재개"), h("span", {class:"small muted"}, "남은 절차를 고치려면 Plan 탭에서 수정(부분 재계획)하세요."));
+  if (st === "applying") out.push(h("button", {onclick: () => send({type:"pause"})}, "일시정지"));
+  if (["plan_approved", "applying", "paused"].includes(st)) out.push(h("button", {class:"danger", onclick: () => { if (confirm("남은 절차를 모두 중단합니다. 계속할까요?")) send({type:"abort", version:v.version}); }}, "중단"));
+  return out;
+}
+
+function phaseView(v, ph, mode, editable) {
+  const gateApproved = v.approvals.some(a => a.kind === "gate" && a.target === ph.id);
+  const kids = [h("div", {class:"head"}, h("h3", {}, ph.id + " · " + ph.title),
+    ph.gate ? h("span", {class:"badge b-warn"}, "게이트" + (ph.gate_locked ? " (제거 불가: 되돌릴 수 없는 step 포함)" : "")) : null, ph.gate && gateApproved ? h("span", {class:"badge b-ok"}, "게이트 승인됨") : null,
+    editable ? h("button", {class:"small", disabled: ph.gate_locked, title: ph.gate_locked ? "제거할 수 없습니다" : "", onclick: () => send({type:"edit", op:"set_gate", phase:ph.id, gate:!ph.gate})}, ph.gate ? "게이트 끄기" : "게이트 켜기") : null)];
+  if (ph.purpose) kids.push(h("div", {class:"small muted"}, ph.purpose));
+  if (ph.preconditions.length) kids.push(h("div", {class:"small"}, "사전 조건: " + ph.preconditions.join(" / ")));
+  if (ph.rollback) kids.push(h("div", {class:"small"}, "롤백: " + ph.rollback));
+  if (mode === "apply" && v.session.state === "applying" && ph.gate && !gateApproved) {
+    kids.push(h("div", {class:"row", style:"margin-top:5px"}, h("button", {class:"primary", disabled: v.you.role === "requester", title:"앞 phase가 끝난 뒤 요청자가 아닌 사람이 승인합니다",
+      onclick: () => send({type:"approve_gate", version:v.version, phase:ph.id})}, "게이트 승인"), h("span", {class:"small muted"}, ph.gate_reason || "앞 phase 결과를 확인하고 진행을 승인합니다.")));
+  }
+  ph.steps.forEach((s, i) => {
+    kids.push(stepRow(v, ph, s, i, editable, mode));
+    if (S.sel === s.id) kids.push(stepDetail(v, ph, s, i, editable, mode));
+    if (editable && S.addAt && S.addAt.phase === ph.id && S.addAt.after === s.id) kids.push(addStepForm(v, ph, s.id));       // 이 절차 뒤에 끼워 넣기
+  });
+  if (editable) {
+    const end = h("div", {class:"dropend", "data-end":ph.id});
+    end.addEventListener("dragover", ev => { if (S.drag && S.drag.phase === ph.id) { ev.preventDefault(); end.classList.add("over"); } });
+    end.addEventListener("dragleave", () => end.classList.remove("over"));
+    end.addEventListener("drop", ev => { ev.preventDefault(); end.classList.remove("over"); dropStep(ph, null, true); });
+    kids.push(end, S.addAt && S.addAt.phase === ph.id && S.addAt.after === null ? addStepForm(v, ph, null) : h("button", {class:"small", onclick: () => { S.addAt = {phase:ph.id, after:null}; renderCenter(); }}, "＋ 절차 추가(맨 끝)"));
+  }
+  return h("div", {class:"phase"}, kids);
+}
+
+// 드래그: 같은 phase 안에서 대상 행 앞으로 옮긴다(서버의 move_step은 "after"를 받는다)
+function dropStep(ph, target, atEnd) {
+  const d = S.drag; S.drag = null;
+  if (!d) return;
+  if (d.phase !== ph.id) { toast("다른 phase로는 옮길 수 없습니다. 같은 phase 안에서만 순서를 바꿀 수 있습니다."); return; }
+  if (!atEnd && target.id === d.id) return;
+  const order = ph.steps.map(x => x.id).filter(id => id !== d.id);
+  const at = atEnd ? order.length : order.indexOf(target.id);
+  const next = [...order.slice(0, at), d.id, ...order.slice(at)];
+  if (ph.steps.map(x => x.id).join() === next.join()) return;
+  send({type:"edit", op:"move_step", step_id:d.id, after: at > 0 ? order[at - 1] : null});
+}
+const GLYPH = {pending:"○", approved:"☑", running:"⟳", awaiting_report:"✎", awaiting_confirm:"⏳", done:"✔", failed:"✖", skipped:"↷", aborted:"⊘"};
+function stateIcon(cls, glyph, label) { return h("span", {class:"ico " + cls, title:label, "aria-label":label}, glyph); }
+function iconBtn(cls, glyph, label, fn, disabled, title) {
+  return h("button", {class:"ico " + cls, "aria-label":label, title: title || label, disabled, onclick: ev => { ev.stopPropagation(); fn(); }}, glyph);
+}
+// 승인은 체크박스 아이콘(☐→☑), 실행은 액션 아이콘(▶→✔). 읽기 절차는 승인 없이 ▶ 하나로 확인·실행한다. 누르면 진행 중(⟳)을 거쳐 실행됨(✔)으로 바뀐다.
+function stepIcons(v, ph, s, state, mode) {
+  const live = v.session.state === "applying", isReq = v.you.role === "requester", pend = (v.pending_requirements || {})[s.id] || [];
+  const needsOther = s.op === "mutate" || (s.op === "read" && !s.grounded), base = {version:v.version, step:s.id};
+  const go = msg => { S.act[s.id] = true; send({...base, ...msg}); renderCenter(); };
+  const open = () => { S.sel = s.id; S.autoOff = false; renderCenter(); };
+  if (state === "done") return [stateIcon("ok", GLYPH.done, "완료")];
+  if (state === "skipped") return [stateIcon("mute", GLYPH.skipped, "건너뜀")];
+  if (state === "aborted") return [stateIcon("mute", GLYPH.aborted, "중단됨")];
+  if (state === "failed") return [stateIcon("bad", GLYPH.failed, "실패 — 펼쳐서 재시도·건너뛰기·중단을 고르세요")];
+  if (mode !== "apply") return [];
+  if (S.act[s.id] || state === "running") return [stateIcon("run", GLYPH.running, "진행 중")];
+  if (state === "awaiting_report") return [iconBtn("act", GLYPH.awaiting_report, "보고 작성", open, false, "사람이 실행한 뒤 완료를 보고합니다(펼쳐서 작성)")];
+  if (state === "awaiting_confirm") return [iconBtn("act", GLYPH.awaiting_confirm, "확인 대기", open, false, isReq ? "다른 작업자의 확인을 기다립니다" : "펼쳐서 보고를 확인하세요")];
+  const why = !live ? "apply 진행 중에만 할 수 있습니다" : "";
+  if (state === "pending" && confirmable(s)) return [iconBtn("act", "▶", "확인(실행)", () => go({type:"run_read", hash:v.plan_hash}), !live, why || "읽기 절차: 승인 없이 확인하면 바로 실행합니다")];
+  const lockReq = needsOther && isReq ? "변경·AI 추정 절차는 요청자가 아닌 사람이 승인합니다" : (pend.length ? "필요한 조치를 먼저 끝내세요(펼쳐서 확인)" : "");
+  const out = [state === "approved" ? stateIcon("ok", GLYPH.approved, "승인됨") :
+    iconBtn("", "☐", "승인", () => go({type:"approve_step", hash:v.plan_hash}), !live || !!lockReq, why || lockReq || "승인")];
+  if (s.op === "manual" || s.op === "none") return out;                          // 사람이 실행하는 절차는 승인 뒤 보고·확인으로 이어진다
+  out.push(iconBtn("act", "▶", s.kind === "poll" ? "폴링 시작" : "실행", s.kind === "poll" ? () => go({type:"start_poll"}) : () => go({type:"run_step"}),
+    !live || state !== "approved", state !== "approved" ? "승인 뒤에 실행할 수 있습니다" : (s.kind === "poll" ? "폴링 시작" : "실행")));
+  return out;
+}
+function stepRow(v, ph, s, idx, editable, mode) {
+  const state = (v.steps[s.id] || {}).state || "pending", who = actorOf(s);
+  const row = h("div", {class:"srow s-" + state + (S.sel === s.id ? " sel" : ""), draggable: editable ? "true" : null, "data-step":s.id, onclick: () => { S.autoOff = S.sel === s.id; S.sel = S.sel === s.id ? null : s.id; renderCenter(); }},
+    editable ? h("span", {class:"grip", title:"끌어서 순서 바꾸기"}, "⋮⋮") : null,
+    h("span", {class:"actor " + who.toLowerCase(), title: who === "AGENT" ? "서버(에이전트)가 실행" : "사람이 직접 실행"}, "[" + who + "]"),
+    h("b", {}, s.id), h("span", {class:"stitle", title:s.title}, s.title),
+    h("span", {class:"icos"}, ...stepIcons(v, ph, s, state, mode)),
+    h("span", {style:"flex:1"}),
+    s.op === "mutate" ? h("span", {class:"badge b-bad"}, "변경") : null, s.risk !== "low" ? h("span", {class:"badge " + (s.risk === "high" ? "b-bad" : "b-warn")}, lab("risk", s.risk)) : null,
+    s.op !== "none" && s.op !== "manual" && !s.grounded ? h("span", {class:"badge b-bad"}, "AI 추정") : null, s.auto ? h("span", {class:"badge b-acc"}, "서버 추가") : null,
+    (s.command || "").startsWith("aws eks") ? h("span", {class:"badge b-warn", title:"이 환경은 aws eks를 거의 쓰지 않습니다. kubectl로 확인할 수 있는지 검토하고, 고치거나 지울 수 있습니다."}, "aws eks") : null,
+    editable ? h("button", {class:"small", title:"이 절차 뒤에 절차 끼워 넣기", onclick: ev => { ev.stopPropagation(); S.addAt = {phase:ph.id, after:s.id}; renderCenter(); }}, "＋") : null);
+  if (editable) {
+    row.addEventListener("dragstart", ev => { S.drag = {id:s.id, phase:ph.id}; try { ev.dataTransfer.setData("text/plain", s.id); ev.dataTransfer.effectAllowed = "move"; } catch {} });
+    row.addEventListener("dragover", ev => { if (S.drag && S.drag.phase === ph.id) { ev.preventDefault(); row.classList.add("over"); } });
+    row.addEventListener("dragleave", () => row.classList.remove("over"));
+    row.addEventListener("drop", ev => { ev.preventDefault(); row.classList.remove("over"); dropStep(ph, s, false); });
+    row.addEventListener("dragend", () => { S.drag = null; });
+  }
+  return row;
+}
+
+function stepDetail(v, ph, s, idx, editable, mode) {
+  const state = (v.steps[s.id] || {}).state || "pending", attempts = (v.steps[s.id] || {}).attempts || 0, ev = (v.evidence || {})[s.id];
+  const you = v.you, isReq = you.role === "requester", sess = v.session.state, who = actorOf(s);
+  const kids = [h("div", {class:"row small"}, h("span", {class:"actor " + who.toLowerCase()}, "[" + who + "]"), h("span", {class:"badge"}, lab("kind", s.kind)), h("span", {class:"badge " + (OPCLASS[s.op] || "")}, lab("op", s.op)),
+    h("span", {class:"badge " + (s.risk === "high" ? "b-bad" : s.risk === "medium" ? "b-warn" : "")}, lab("risk", s.risk)),
+    s.declared_irreversible || (s.impact && s.impact.reversible === "irreversible") ? h("span", {class:"badge b-bad"}, "되돌릴 수 없음") : null, h("span", {class:"badge b-acc", title:lab("step", state)}, (state === "aborted" ? GLYPH.aborted : lab("step", state)) + (attempts > 1 ? " (" + attempts + "회째)" : "")))];
+  if (s.command) kids.push(h("pre", {}, s.command), s.op === "manual" ? h("div", {class:"row"}, h("button", {onclick: () => navigator.clipboard.writeText(s.command).then(() => toast("명령을 복사했습니다"), () => toast("복사하지 못했습니다"))}, "명령 복사"),
+    h("span", {class:"small muted"}, "서버는 이 명령을 실행하지 않습니다. 자신의 터미널에서 직접 실행하세요.")) : null);
+  if (s.rationale) kids.push(h("div", {class:"small muted"}, s.rationale));
+  const meta = [];
+  if (s.depends_on.length) meta.push("의존: " + s.depends_on.join(", "));
+  if (s.check_for) meta.push("확인 대상: " + s.check_for);
+  if (s.poll) meta.push("폴링 " + s.poll.interval_seconds + "초 간격, 최대 " + s.poll.max_seconds + "초, 완료 조건: " + s.poll.until);
+  if (s.checklist.length) meta.push("체크리스트: " + s.checklist.join(" / "));
+  if (meta.length) kids.push(h("div", {class:"small muted"}, meta.join(" · ")));
+  if (s.flags.length) kids.push(h("div", {class:"small"}, "위험 표시: ", s.flags.map(f => h("span", {class:"badge b-warn"}, lab("flag", f)))));
+  if (s.impact && Object.keys(s.impact).length) kids.push(h("div", {class:"small muted"}, "영향: " + ["disruption", "reversible", "replaces"].filter(k => s.impact[k] !== undefined).map(k => k + "=" + s.impact[k]).join(", ")));
+  kids.push(h("details", {}, h("summary", {class:"small"}, ev && ev.grounded ? "근거 문서 보기" : "근거"),
+    ev && ev.grounded ? h("pre", {}, ev.text || "") : h("div", {class:"small"}, s.op === "none" ? "실행하지 않는 step입니다." : "문서에 근거가 없는 AI 추정 명령입니다. 다른 사람의 승인이 필요합니다.")));
+  const pend = (v.pending_requirements || {})[s.id] || [];
+  if (s.requires.length) kids.push(h("div", {class:"small"}, "필요한 조치: ", s.requires.map(r => h("div", {}, (pend.includes(r) ? "☐ " : "☑ ") + lab("req", r)))));
+  const outs = (v.outputs || []).filter(o => o.step_id === s.id && o.text);
+  if (outs.length) { const o = outs[outs.length - 1]; kids.push(h("details", {}, h("summary", {class:"small"}, "결과 (" + o.status + (o.exit_code !== null && o.exit_code !== undefined ? ", exit " + o.exit_code : "") + ")"), h("pre", {}, o.text))); }
+  const acts = actionsFor(v, ph, s, state, pend, isReq, sess, mode);
+  if (acts.length) kids.push(h("div", {class:"row", style:"margin-top:5px"}, acts));
+  if (state === "failed" && mode === "apply") kids.push(failureView(v, s));
+  if (editable) kids.push(editForm(v, ph, s, idx));
+  return h("div", {class:"detail"}, kids);
+}
+function editForm(v, ph, s, idx) {
+  const locked = ["done", "skipped"].includes((v.steps[s.id] || {}).state);
+  const title = h("input", {value:s.title, maxlength:120, style:"width:100%", disabled: locked}), cmd = s.command !== null && s.command !== undefined ? h("input", {value:s.command, style:"width:100%", disabled: locked}) : null,
+    why = h("input", {value:s.rationale || "", maxlength:200, style:"width:100%", disabled: locked, placeholder:"이유(선택)"});
+  return h("details", {style:"margin-top:6px"}, h("summary", {class:"small"}, "이 절차 수정"),
+    locked ? h("div", {class:"small muted"}, "완료된 절차는 바꿀 수 없습니다.") : null,
+    h("div", {class:"small muted"}, "제목"), title, cmd ? h("div", {class:"small muted"}, "명령(실제 값을 써도 자동으로 가려집니다. 서버의 명령 가드를 다시 통과해야 합니다)") : null, cmd, h("div", {class:"small muted"}, "이유"), why,
+    h("div", {class:"row", style:"margin-top:5px"},
+      h("button", {class:"primary", disabled: locked, onclick: () => { const f = {title:title.value, rationale:why.value}; if (cmd) f.command = cmd.value; send({type:"edit", op:"update_step", step_id:s.id, fields:f}); }}, "수정 저장"),
+      h("button", {disabled: idx === 0 || locked, onclick: () => send({type:"edit", op:"move_step", step_id:s.id, after: idx >= 2 ? ph.steps[idx - 2].id : null})}, "위로"),
+      h("button", {disabled: idx === ph.steps.length - 1 || locked, onclick: () => send({type:"edit", op:"move_step", step_id:s.id, after: ph.steps[idx + 1].id})}, "아래로"),
+      h("button", {class:"danger", disabled: locked, onclick: () => { if (confirm(s.id + " 절차를 삭제할까요?")) { S.sel = null; send({type:"edit", op:"delete_step", step_id:s.id}); } }}, "삭제")));
+}
+function addStepForm(v, ph, after) {
+  const kind = h("select", {}, [["cli", "[AGENT] CLI 명령(aws·kubectl, 서버가 실행)"], ["manual", "[MANUAL] 수동 실행 명령(서버는 실행하지 않음)"], ["iac", "[MANUAL] 코드(IaC) 변경 체크리스트"], ["check", "[MANUAL] 수동 체크리스트"]].map(([k, t]) => h("option", {value:k}, t)));
+  const title = h("input", {placeholder:"제목", maxlength:120, style:"width:100%"}), cmd = h("input", {placeholder:"명령(실제 값을 써도 자동으로 가려집니다)", style:"width:100%"}),
+    chk = h("input", {placeholder:"확인(읽기) 명령 — 변경 명령이면 필요합니다", style:"width:100%"}), list = h("textarea", {placeholder:"체크리스트(한 줄에 하나)", style:"min-height:46px"});
+  return h("div", {class:"detail", style:"border-radius:6px;margin-top:5px"}, h("div", {class:"small muted"}, after ? "절차 끼워 넣기 — " + after + " 바로 뒤" : "절차 추가 — phase " + ph.id + " 맨 끝"), kind, title, cmd, chk, list,
+    h("div", {class:"row", style:"margin-top:5px"}, h("button", {class:"primary", onclick: () => {
+      const id = "custom-" + Date.now().toString(36), steps = [], k = kind.value, lines = list.value.split("\n").map(x => x.trim()).filter(Boolean);
+      const main = {id, kind:k, title:title.value};
+      if (k === "cli" || k === "manual") main.command = cmd.value;
+      if (k === "iac" || k === "check") main.checklist = lines;
+      steps.push(main);
+      if (k === "cli" && chk.value.trim()) steps.push({id:id + "-chk", kind:"cli", title:"확인: " + title.value, command:chk.value, check_for:id});
+      send({type:"edit", op:"add_steps", phase:ph.id, steps, ...(after ? {after} : {})}); S.addAt = null;
+    }}, "추가"), h("button", {onclick: () => { S.addAt = null; renderCenter(); }}, "취소")));
+}
+
+// 읽기 절차(사전 점검 포함)는 별도 승인 없이 "확인" 한 번으로 진행한다: 문서 근거가 있고 추가 조치가 없는 읽기 절차만
+const confirmable = s => s.op === "read" && s.grounded && s.requires.length === 0 && s.kind !== "manual";
+// 상세에는 입력이 필요한 것(사유·보고·확인 메모·재시도 선택)과 추가 조치 확인만 둔다. 승인·실행·확인(읽기)은 줄의 아이콘으로 한다.
+function actionsFor(v, ph, s, state, pend, isReq, sess, mode) {
+  const out = [], base = {version:v.version, step:s.id};
+  const btn = (text, msg, cls, dis, title) => h("button", {class:cls || "", disabled: dis, title: title || "", onclick: () => send({...base, ...msg})}, text);
+  if (mode === "plan") {
+    if (s.op === "read" && s.grounded && s.kind !== "poll" && ["plan_review", "plan_approved"].includes(sess)) out.push(btn("읽기 결과 미리보기", {type:"preview_read"}));
+    return out;
+  }
+  if (sess !== "applying") return out;
+  if (state === "pending" && !confirmable(s)) {
+    if (pend.includes("open_cidr_confirm")) { if (isReq) out.push(reasonBox(v, s)); else out.push(btn("전체 개방 확인", {type:"confirm_requirement", requirement:"open_cidr_confirm"})); }
+    for (const r of pend) if (["strong_warning", "prod_warning", "show_file_contents"].includes(r)) out.push(btn(lab("req", r).split(":")[0] + " 확인", {type:"confirm_requirement", requirement:r}, "", isReq, isReq ? "요청자는 확인할 수 없습니다" : ""));
+    if (!pend.length && !((s.op === "mutate" || (s.op === "read" && !s.grounded)) && isReq)) out.push(h("span", {class:"small muted"}, "줄의 ☐ 아이콘으로 승인하세요."));
+  } else if (state === "running" && s.kind === "poll") {
+    out.push(btn("완료 조건 충족 확인", {type:"poll_complete"}, "primary"), h("span", {class:"small muted"}, "최신 조회 결과를 보고 완료 조건을 확인하세요."));
+  } else if (state === "awaiting_report") {
+    out.push(isReq ? reportBox(v, s) : h("span", {class:"small muted"}, "요청자의 실행 완료 보고를 기다립니다."));
+  } else if (state === "awaiting_confirm") {
+    out.push(isReq ? h("span", {class:"small muted"}, "다른 작업자의 확인을 기다립니다.") : confirmBox(v, s));
+  }
+  return out;
+}
+function reasonBox(v, s) {
+  const key = "reason:" + s.id, ta = h("textarea", {placeholder:"전체 개방이 필요한 사유(5자 이상)"}, S.drafts[key] || "");
+  ta.addEventListener("input", () => S.drafts[key] = ta.value);
+  return h("div", {style:"width:100%"}, ta, h("button", {onclick: () => send({type:"provide_reason", version:v.version, step:s.id, text:ta.value})}, "사유 제출"));
+}
+function reportBox(v, s) {
+  const key = "report:" + s.id, ta = h("textarea", {placeholder:"(선택) 실행 결과를 붙여넣기. 비밀번호·키는 붙여넣지 마세요."}, S.drafts[key] || "");
+  ta.addEventListener("input", () => S.drafts[key] = ta.value);
+  const boxes = s.checklist.map(() => h("input", {type:"checkbox"}));
+  return h("div", {style:"width:100%"}, s.checklist.length ? s.checklist.map((c, i) => h("label", {}, boxes[i], " " + c)) : null, ta,
+    h("div", {class:"row"}, h("button", {class:"primary", onclick: () => send({type:"report_done", version:v.version, step:s.id, text:ta.value, checked:boxes.map((b, i) => b.checked ? i : -1).filter(i => i >= 0)})}, "실행 완료 보고"),
+      h("button", {class:"danger", onclick: () => send({type:"report_failed", version:v.version, step:s.id, text:ta.value})}, "실패 보고")));
+}
+function confirmBox(v, s) {
+  const rep = (v.outputs || []).filter(o => o.step_id === s.id && o.status === "reported").pop();
+  const key = "note:" + s.id, note = h("input", {placeholder:"(선택) 메모", value:S.drafts[key] || ""});
+  note.addEventListener("input", () => S.drafts[key] = note.value);
+  return h("div", {style:"width:100%"}, rep ? h("pre", {}, "요청자의 보고:\n" + rep.text) : h("div", {class:"small muted"}, "요청자가 결과를 붙여넣지 않았습니다."),
+    h("div", {class:"row"}, note, h("button", {class:"primary", onclick: () => send({type:"confirm_report", version:v.version, step:s.id, accept:true, note:note.value})}, "확인(완료)"),
+      h("button", {class:"danger", onclick: () => send({type:"confirm_report", version:v.version, step:s.id, accept:false, note:note.value})}, "거절(다시 보고)")));
+}
+function failureView(v, s) {
+  let a = null;
+  for (const e of (v.events || []).slice().reverse()) if (e.kind === "failure_analysis") { try { const x = JSON.parse(e.detail); if (x.step === s.id) { a = x; break; } } catch {} }
+  const out = (v.outputs || []).filter(o => o.step_id === s.id).pop();
+  const kids = [h("div", {class:"banner"}, h("b", {}, "실패했습니다. 재시도, 건너뛰기, 중단 중에서 고르세요."), out ? h("div", {class:"small"}, "분류: " + (out.hint || "알 수 없음")) : null,
+    v.analyzing === s.id ? h("div", {class:"small"}, "답변을 생성 중입니다… 실패 원인을 분석하고 있습니다(오른쪽 대화에 표시됩니다).") : null,
+    a ? h("div", {class:"small"}, h("div", {}, "AI 분석(참고용): " + (a.cause || "")), h("div", {}, "추천(서버 규칙으로 좁힘): " + a.recommendation + (a.adjustments && a.adjustments.length ? " — " + a.adjustments.join(", ") : "")),
+      a.needs_state_check ? h("div", {}, "적용됐을 수 있어 재시도 전에 상태 확인이 필요합니다.") : null) : null)];
+  if (v.session.state === "paused") {
+    const chk = h("input", {type:"checkbox"});
+    kids.push(h("div", {class:"row"}, h("label", {}, chk, " 상태를 확인했습니다(적용되지 않았음을 확인)"),
+      h("button", {onclick: () => send({type:"decide", version:v.version, step:s.id, choice:"retry", state_checked:chk.checked})}, "재시도"),
+      h("button", {onclick: () => send({type:"decide", version:v.version, step:s.id, choice:"skip"})}, "건너뛰기"),
+      h("button", {class:"danger", onclick: () => send({type:"decide", version:v.version, step:s.id, choice:"abort"})}, "중단")));
+  }
+  return h("div", {}, kids);
+}
+function logPanel(v) {         // 활동 로그는 접어 둔다
+  return h("details", {class:"card"}, h("summary", {class:"small muted"}, "활동 로그 (최근 " + (v.events || []).length + "건)"), h("ul", {class:"small"}, (v.events || []).slice().reverse().map(e =>
+    h("li", {}, new Date(e.ts * 1000).toLocaleTimeString() + " · " + (e.nick || "서버") + " · " + e.kind + (e.detail ? " · " + e.detail.slice(0, 120) : "")))),
+    h("div", {class:"small muted"}, "승인 기록: " + (v.approvals || []).map(a => a.kind + ":" + a.target + "(" + a.nick + ")").join(", ")));
+}
+
+// ---- 우측: 이 작업의 대화(프롬프트·추가 정보·실패 분석). 작업마다 따로이다 ----
+function renderChat() {
+  keep($chat, () => {
+    const v = S.view, kids = [h("div", {class:"pane-title", title:"이 작업의 대화입니다. 다른 작업은 ＋ 새 작업에서 시작하세요."}, "대화 · " + (S.sid ? (v ? (v.session.title || "(제목 없음)") : "…") : "새 작업"))];
+    if (!S.sid) {
+      kids.push(h("div", {class:"bubble"}, h("div", {class:"small muted"}, "에이전트"),
+        S.newTask ? "어떤 작업을 하시겠어요? 가운데에서 제목을 정하고, 아래 입력창에 작업을 설명해 주세요. 필요한 정보가 있으면 여기서 물어봅니다." : "왼쪽에서 작업을 고르거나 ‘＋ 새 작업’을 시작하세요."));
+    } else if (!v) kids.push(h("div", {class:"banner"}, "연결 중입니다…"));
+    else {
+      for (const m of (v.thread || [])) kids.push(h("div", {class:"bubble " + (m.role === "user" ? "user" : "bot")}, h("div", {class:"small muted"}, m.role === "user" ? "요청" : "에이전트"), h("div", {style:"white-space:pre-wrap"}, m.text)));
+      const p = v.pipeline;
+      if (v.session.state === "draft" && p && p.status === "generating") kids.push(h("div", {class:"bubble"}, h("div", {class:"small muted"}, "에이전트"), "답변을 생성 중입니다… 절차를 만들고 있습니다(문서를 찾아 근거를 확인하는 중, 1~3분)."));
+      if (v.analyzing) kids.push(h("div", {class:"bubble"}, h("div", {class:"small muted"}, "에이전트"), "답변을 생성 중입니다… 절차 " + v.analyzing + "의 실패 원인을 분석하고 있습니다."));
+      if (p && p.interpretations && p.interpretations.length) kids.push(h("div", {class:"small muted"}, h("b", {}, "모호한 표현을 이렇게 해석했습니다: "),
+        p.interpretations.map(i => h("div", {}, "· " + i.alias + " → " + i.choice + (i.evidence ? " (근거: “" + i.evidence + "”)" : "")))));
+    }
+    $chat.replaceChildren(...kids);
+  });
+}
+// 입력창: 새 작업이면 요청(제목은 가운데에서), 되묻기·중단·거절 뒤이면 같은 세션에서 이어서 답한다
+function renderComposer() {
+  $comp.replaceChildren();
+  if (!S.sid && !S.newTask) return;
+  const v = S.view, ta = h("textarea", {rows:3, maxlength:2000}), key = "composer:" + (S.sid || "new");
+  ta.value = S.drafts[key] || "";
+  ta.addEventListener("input", () => S.drafts[key] = ta.value);
+  let mode = "new", hint = "하고 싶은 작업을 설명해 주세요. 예) dev-main 클러스터를 1.35에서 1.36으로 업그레이드하는 계획을 세워줘", enabled = true;
+  if (S.sid) {
+    const p = v && v.pipeline, you = v && v.you;
+    if (!v) { enabled = false; hint = "연결 중입니다…"; }
+    else if (v.session.state === "draft" && p && p.status === "generating") { enabled = false; hint = "답변을 생성 중입니다… 1~3분쯤 걸립니다."; }
+    else if (v.session.state === "draft" && p && ["clarify", "stopped", "reject"].includes(p.status)) {
+      mode = "answer";
+      if (you.role !== "requester") { enabled = false; hint = "요청자가 답할 때까지 기다리는 중입니다."; }
+      else hint = (p.status === "clarify" ? "위 질문에 대한 답을 이어서 적어 주세요." : p.status === "stopped" ? "내용을 보태서 다시 요청하거나, 오른쪽의 ‘다시 시도’를 누르세요." : "내용을 보태서 다시 요청해 주세요.") + " (이 작업의 추가 정보만 입력하세요. 다른 작업은 왼쪽의 ＋ 새 작업에서 시작합니다.)";
+    } else { mode = "none"; enabled = false; hint = v.analyzing ? "답변을 생성 중입니다…" : "가운데의 절차 목록에서 검토·수정·승인하세요. 새 요청은 왼쪽의 ‘＋ 새 작업’에서 시작합니다."; }
+  }
+  ta.setAttribute("placeholder", hint);
+  if (!enabled) ta.setAttribute("disabled", "");
+  const go = async () => {
+    if (!ta.value.trim() || S.busy) return;
+    if (mode === "answer") { send({type:"answer", text:ta.value}); S.drafts[key] = ""; ta.value = ""; return; }
+    const title = (S.drafts.title || "").trim(), nick = (S.drafts.nick || store.get("nick", "")).trim();
+    if (!title) { toast("가운데에서 작업 제목을 먼저 입력하세요."); const t = document.getElementById("newtitle"); if (t && t.focus) t.focus(); return; }
+    if (!nick) { toast("닉네임을 입력하세요."); return; }
+    S.busy = true;
+    try {
+      const r = await api("/api/sessions", {nick, title, request:ta.value, iac_managed:!!S.drafts.iac});
+      store.set("nick", nick); S.drafts[key] = ""; S.drafts.title = ""; S.drafts.iac = false;
+      const c = {sid:r.session_id, nick, token:r.member_token}; addCred(c); S.invite = location.origin + r.join_path; openSession(c); S.tab = "right"; loadHistory();
+    } catch (e) { toast(e.message); } finally { S.busy = false; }
+  };
+  ta.addEventListener("keydown", ev => { if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); go(); } });
+  const canRetry = mode === "answer" && enabled && v.pipeline.status === "stopped";
+  $comp.append(h("div", {class:"row", style:"align-items:flex-end;flex-wrap:nowrap"}, h("div", {style:"flex:1"}, ta),
+    h("div", {class:"row", style:"flex-direction:column;align-items:stretch;gap:4px"}, h("button", {class:"primary", disabled:!enabled, onclick:go}, mode === "answer" ? "답하기" : "보내기"),
+      canRetry ? h("button", {onclick: () => send({type:"retry_generation"})}, "다시 시도") : null)),
+    h("div", {class:"small muted"}, "Enter로 보내기, Shift+Enter로 줄바꿈"));
+}
+
+// ---- 시작 ----
+for (const b of document.querySelectorAll("#tabs button")) b.addEventListener("click", () => { S.tab = b.getAttribute("data-tab"); render(); });
+const act = store.sget("active"), found = act && creds().find(x => x.sid === act.sid && x.nick === act.nick);
+if (found) openSession(found); else render();
+loadHistory();
+</script>
+</body>
+</html>

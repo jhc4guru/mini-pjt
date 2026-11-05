@@ -61,7 +61,7 @@ class Glossary:
                         continue
                     self._rules.append((section, _alias_regex(str(alias)), str(alias), terms))
         self._ambiguous = [
-            (_alias_regex(a["alias"]), a) for a in data.get("ambiguous", []) or [] if a.get("candidates")
+            (_alias_regex(a["alias"]), a, [str(x).lower() for x in (a.get("exclude") or [])]) for a in data.get("ambiguous", []) or [] if a.get("candidates")
         ]
 
     def expand(self, query: str, sections: tuple[str, ...] = SECTIONS) -> Expansion:
@@ -74,7 +74,10 @@ class Glossary:
                 for t in terms:
                     if t not in exp.terms:
                         exp.terms.append(t)
-        for pat, item in self._ambiguous:
-            if pat.search(q):
+        for pat, item, exclude in self._ambiguous:
+            text = q
+            for ex in exclude:                                 # 뜻이 분명한 복합어(ssh키, 키 페어 등)에 든 표현은 모호하다고 보지 않는다
+                text = text.replace(ex, " ")
+            if pat.search(text):
                 exp.ambiguous.append({"alias": item["alias"], "candidates": item["candidates"], "note": item.get("note", "")})
         return exp

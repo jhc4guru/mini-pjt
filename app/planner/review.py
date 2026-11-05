@@ -12,7 +12,9 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
+
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 from app.guards.agent_limits import SchemaViolation, validate_structured
 from app.guards.audit import AuditLog
@@ -22,6 +24,8 @@ from app.guards.masking import Masker
 from app.llm import LLMClient, LLMUnavailable
 from app.planner.schema import Phase, Plan, Step
 from app.rag.chunks import Chunk
+
+MAX_REVIEW_TOKENS = 3500      # phase가 많은 큰 계획의 요약이 1,200 토큰에서 잘렸다(실측)
 
 REVIEWER_PROMPT = """# 역할
 너는 DevOps 작업 계획의 리뷰어다. 승인자가 계획을 빨리 이해하도록 짧은 한국어 요약을 쓴다. 승인 여부를 정하지 않고, 승인 규칙을 대체하지 않는다. 너의 요약은 참고용이다.
@@ -53,6 +57,7 @@ _CHECK_MESSAGES = {
     "manual_step": "사람이 직접 실행하는 step이 있다",
     "iac_step": "코드(IaC) 변경 step이 있다",
     "auto_step": "서버가 자동으로 더한 step이 있다",
+    "aws_eks_heavy": "aws eks 명령이 많다(kubectl로 확인할 수 있는지 검토. 이 환경은 aws eks를 거의 쓰지 않는다)",
 }
 
 
@@ -76,18 +81,26 @@ class ReviewFacts:
     warnings: tuple[str, ...] = ()                   # 후처리 경고 코드
 
 
+def _cut(n: int):
+    """길이 초과는 거부하지 않고 자른다. 요약 문장의 길이 때문에 재시도·실패가 되면 참고용 요약이 사라진다(실측: 큰 계획에서 초과)."""
+    return BeforeValidator(lambda v: v[:n] if isinstance(v, str) else v)
+
+
+Short = Annotated[str, _cut(160)]
+
+
 class _Notes(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    phase: str = Field(max_length=40)
-    note: str = Field(max_length=200)
+    phase: Annotated[str, _cut(40)]
+    note: Annotated[str, _cut(200)]
 
 
 class _ReviewModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    headline: str = Field(max_length=120)
-    summary: str = Field(max_length=700)
-    attention: list[str] = Field(default_factory=list, max_length=5)
-    phase_notes: list[_Notes] = Field(default_factory=list, max_length=20)
+    headline: Annotated[str, _cut(120)]
+    summary: Annotated[str, _cut(700)]
+    attention: Annotated[list[Short], BeforeValidator(lambda v: v[:5] if isinstance(v, list) else v)] = Field(default_factory=list)
+    phase_notes: Annotated[list[_Notes], BeforeValidator(lambda v: v[:20] if isinstance(v, list) else v)] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -137,6 +150,10 @@ def _phase_items(p: Phase) -> list[CheckItem]:
 
 def build_review(plan: Plan) -> ReviewFacts:
     items = [i for p in plan.phases for i in _phase_items(p)]
+    steps = plan.all_steps()
+    eks = [x.id for x in steps if (x.command or "").startswith("aws eks")]
+    if len(eks) >= 4 and len(eks) * 5 > len(steps):            # 사용자 방침(D-45): 상태 확인은 kubectl 우선. 위험이 아니라 검토 안내라 info다(위험 등급에 영향 없음)
+        items.append(CheckItem("aws_eks_heavy", "info", None, tuple(eks[:6]), f"{len(eks)}/{len(steps)}"))
     codes = {i.code for i in items if i.status == "warn"}
     if codes & {"irreversible", "risk_flag", "fallback_step"}:
         level = "high"
@@ -191,7 +208,7 @@ class Reviewer:
         roles: list[str] = []
 
         def call() -> str:
-            r = self._llm.complete("SUB", _facts_json(plan, facts), system=REVIEWER_PROMPT, max_tokens=1200, session_id=session_id)
+            r = self._llm.complete("SUB", _facts_json(plan, facts), system=REVIEWER_PROMPT, max_tokens=MAX_REVIEW_TOKENS, session_id=session_id)
             roles.append(f"{r.requested_role}->{r.actual_role}")
             text = r.text
             i, j = text.find("{"), text.rfind("}")

@@ -186,3 +186,27 @@ def test_step_evidence_returns_the_documentation_or_marks_ai_guess(env, chunks):
     assert step_evidence(odd, by_id) == {"grounded": False, "label": "AI 추정", "chunk_id": None, "text": None}
     man = plan_of(env, [S("m", "kubectl exec web-0 -- ls", kind="manual")]).all_steps()[0]
     assert step_evidence(man, by_id)["grounded"] is True
+
+
+def test_overlong_model_text_is_trimmed_instead_of_rejected(env):
+    """실측: 큰 계획에서 모델이 길이 제한을 넘기면 스키마 위반으로 요약이 통째로 사라졌다. 길이는 자르고 내용은 살린다."""
+    long = {"headline": "가" * 300, "summary": "나" * 2000, "attention": ["다" * 400] * 8,
+            "phase_notes": [{"phase": "p1", "note": "라" * 500}]}
+    rv, fake, _ = reviewer(env, [long])
+    r = rv.review(reboot_plan(env))
+    assert r.summary and len(r.headline) == 120 and len(r.summary) == 700 and len(r.attention) == 5 and all(len(a) == 160 for a in r.attention)
+    assert len(r.phase_notes["p1"]) == 200 and len(fake.bodies) == 1
+
+
+# ---------------- aws eks 비중 안내(D-45, 사용자 방침: kubectl 우선) ----------------
+def test_many_aws_eks_steps_get_an_info_note_without_changing_the_risk_level(env):
+    cl = env[1].mask("dev-main")
+    reads = [S(f"e{i}", f"aws eks describe-cluster --name {cl}") for i in range(4)] + [S("k", "kubectl get nodes")]
+    facts = build_review(plan_of(env, reads))
+    note = [i for i in facts.checklist if i.code == "aws_eks_heavy"]
+    assert len(note) == 1 and note[0].status == "info" and note[0].detail == "4/5" and note[0].steps == ("e0", "e1", "e2", "e3")
+    assert facts.risk_level == "low" and not codes(facts)                                # 안내일 뿐 위험 등급과 경고에는 영향이 없다
+    few = build_review(plan_of(env, [S("e0", f"aws eks describe-cluster --name {cl}"), S("k1", "kubectl get nodes"), S("k2", "kubectl version")]))
+    assert not [i for i in few.checklist if i.code == "aws_eks_heavy"]                   # 적게 쓰면 안내하지 않는다
+    kube = build_review(plan_of(env, [S("k1", "kubectl get nodes"), S("k2", "kubectl version")]))
+    assert not [i for i in kube.checklist if i.code == "aws_eks_heavy"]

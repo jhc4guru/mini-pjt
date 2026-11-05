@@ -176,3 +176,38 @@ def test_secrets_followed_by_particles_are_detected(t):
 ])
 def test_english_injection_attached_to_korean_text_is_detected(t):
     assert find_injection(t)
+
+
+# ---- 회귀: 목록에 없는 접두사의 리소스 ID (moto·실제 출력에서 발견: vpc-cidr-assoc-…) ----
+@pytest.mark.parametrize("rid", [
+    "vpc-cidr-assoc-2c161de0d6c0e63c8", "subnet-cidr-assoc-0123456789abcdef0", "rtbassoc-0a1b2c3d4e5f60718", "eipassoc-0123456789abcdef0",
+    "eni-attach-0123456789abcdef0", "vpce-0123456789abcdef0", "pcx-0123456789abcdef0", "tgw-0123456789abcdef0", "key-0123456789abcdef0",
+    "dopt-0123456789abcdef0", "fl-0123456789abcdef0",
+])
+def test_resource_ids_with_other_prefixes_are_masked(masker, rid):
+    assert rid not in masker.mask(f"id {rid}를 확인")
+    assert find_sensitive(rid)
+
+
+@pytest.mark.parametrize("text", ["us-east-1 리전", "kube-proxy-x7k2p 파드", "check-launch-template-versions step", "i-am-not-an-id", "2026-11-04 작업", "describe-instance-status 명령"])
+def test_ordinary_hyphenated_words_are_not_masked(masker, text):
+    assert masker.mask(text) == text
+
+
+def test_unknown_prefix_ids_get_a_generic_placeholder(masker):
+    assert masker.mask("vpc-cidr-assoc-2c161de0d6c0e63c8") == "<ID_1>" and masker.mask("sg-0123456789abcdef0") == "<SG_1>"
+
+
+# ---- 공개된 AMI 제작사 계정 ID (D-45) ----
+@pytest.mark.parametrize("public", ["099720109477", "137112412989", "309956199498", "136693071363", "013907871322", "679593333241"])
+def test_public_ami_publisher_account_ids_are_not_sensitive(masker, public):
+    """`describe-images --owners <제작사 ID>`는 공개된 값이다. 마스킹하지 않고 누출로 보지도 않는다."""
+    text = f"aws ec2 describe-images --owners {public} --filters Name=name,Values=x"
+    assert masker.mask(text) == text and not find_sensitive(text) and masker.leaked_kinds(text) == []
+
+
+def test_other_twelve_digit_numbers_are_still_account_ids(masker):
+    for other in ("123456789012", "099720109478", "999999999999"):                          # 목록에 없는 값(제작사 ID와 한 자리만 다른 값 포함)
+        assert "account_id" in masker.leaked_kinds(f"--owners {other}") and "<ACCOUNT_" in masker.mask(f"--owners {other}")
+    assert "account_id" in masker.leaked_kinds("099720109477 123456789012")                    # 공개 ID와 섞여 있어도 다른 값은 잡는다
+    assert masker.mask("099720109477 123456789012") == "099720109477 <ACCOUNT_1>"

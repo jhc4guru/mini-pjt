@@ -59,7 +59,10 @@ entities:
     aliases: [iam user, user, 유저, 사용자, iam 사용자]
   - canonical: Access Key
     cli: aws iam
-    aliases: [access key, 액세스 키, 엑세스 키, 키 페어]
+    aliases: [access key, 액세스 키, 엑세스 키]
+  - canonical: EC2 Key Pair (key-pair, SSH 접속용 키)
+    cli: aws ec2
+    aliases: [key pair, keypair, 키 페어, 키페어, ssh 키, ssh키, ssh key, pem 키]
   - canonical: Namespace
     cli: kubectl
     aliases: [namespace, ns, 네임스페이스]
@@ -121,4 +124,6 @@ ambiguous:
     note: "쿠버네티스 Service 리소스인지 AWS 서비스를 뜻하는지 확인한다."
   - alias: 키
     candidates: [Access Key, S3 Object Key]
+    # 아래 복합어 안의 "키"는 뜻이 분명하므로 되묻지 않는다(예: "ssh키는 없음" → EC2 키 페어).
+    exclude: [ssh 키, ssh키, ssh key, pem 키, 키 페어, 키페어, 키 쌍, 개인 키, 공개 키, 액세스 키, 엑세스 키, 비밀 키, 시크릿 키, 암호화 키, kms 키]
     note: "IAM 액세스 키는 restricted(create-access-key)이므로 객체 키와 구분해서 확인한다."

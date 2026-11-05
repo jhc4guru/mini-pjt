@@ -22,14 +22,22 @@ def _c(pattern: str, flags: int = 0) -> re.Pattern[str]:
 # 공개 상수는 민감값이 아니다. 전체 개방(0.0.0.0/0) 판정에 실제 값이 필요하다.
 _PUBLIC_CIDRS = r"(?!0\.0\.0\.0/0(?![0-9]))"
 
+# 공개된 AMI 제작사 계정 ID(`describe-images --owners`에 쓰는 값)는 비밀이 아니라 마스킹·누출 검사에서 제외한다(D-45).
+# 정확히 이 12자리와 일치할 때만 제외하고, 이 목록에 없는 12자리 숫자는 계속 계정 ID로 본다.
+PUBLIC_ACCOUNT_IDS = {
+    "099720109477": "Canonical(Ubuntu)", "137112412989": "Amazon(Amazon Linux)", "309956199498": "Red Hat", "136693071363": "Debian",
+    "013907871322": "SUSE", "679593333241": "AWS Marketplace",
+}
+_PUBLIC_ACCOUNT_IDS = "|".join(PUBLIC_ACCOUNT_IDS)
+
 # 마스킹 대상. ARN은 계정 자리가 숫자이거나 비어 있는 것만 잡는다(ASCII 문자까지만 ARN으로 보고, 뒤에 붙은 조사는 남긴다).
 # 계정이 `aws`인 AWS 관리형 정책 ARN(arn:aws:iam::aws:policy/...)은 공개 값이라 마스킹하지 않는다.
 SENSITIVE_PATTERNS: dict[str, re.Pattern[str]] = {
-    "account_id": re.compile(rf"(?<![{_W}.])\d{{12}}(?![{_W}.])"),
+    "account_id": re.compile(rf"(?<![{_W}.])(?!(?:{_PUBLIC_ACCOUNT_IDS})(?![{_W}.]))\d{{12}}(?![{_W}.])"),
     "arn": _c(r"\barn:aws[a-z-]*:[a-z0-9-]*:[a-z0-9-]*:\d*:[^\s\"',;)\u0080-\U0010ffff]+"),
-    "resource_id": _c(
-        r"\b(?:sg|sgr|i|vpc|subnet|ami|eni|rtb|igw|vol|snap|nat|eipalloc|lt|acl|eks|asg)-[0-9a-f]{8,17}\b"
-    ),
+    # AWS 리소스 ID는 접두사가 매우 많다(vpc-cidr-assoc-, rtbassoc-, vpce-, key- ...). 목록으로 잡으면 새 접두사가 마스킹을 피해 가므로,
+    # 소문자 접두사 1~3토막 + 16진수 8~17자리 꼴이면 모두 리소스 ID로 본다(과하게 잡는 쪽이 안전하다).
+    "resource_id": _c(r"\b(?:[a-z]{1,12}-){1,3}[0-9a-f]{8,17}\b"),
     "access_key": _c(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
     "ip_or_cidr": _c(_PUBLIC_CIDRS + r"\b\d{1,3}(?:\.\d{1,3}){3}(?:/\d{1,2})?\b"),
     "email": re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"),
@@ -41,6 +49,11 @@ SECRET_PATTERNS: dict[str, re.Pattern[str]] = {
         r"(?i)\b(?:password|passwd|pwd|secret(?:[_ -]?access)?[_ -]?key|api[_-]?key|token|private[_-]?key)\b\s*[:=]\s*[^\s,;]+"
     ),
     "ko_secret_assignment": re.compile(r"(?:비밀번호|패스워드|시크릿\s*키|토큰)\s*[:=]\s*[^\s,;]+"),
+    # `:`·`=` 없이 문장으로 쓴 시크릿("비밀번호는 Passw0rd!x 입니다"). 값은 ASCII 6자 이상이고 숫자나 기호를 포함해야 한다(일반 낱말 오탐 방지)
+    "ko_secret_phrase": re.compile(
+        r"(?:비밀번호|패스워드|암호|시크릿\s*키|토큰)\s*(?:은|는|이|가|을|를)?\s*[:=]?\s*"
+        r"(?=[A-Za-z0-9!@#$%^&*_+=./~-]{6,})(?=[^\s]*[0-9!@#$%^&*_+=~])[A-Za-z0-9!@#$%^&*_+=./~-]{6,}"
+    ),
     "private_key_block": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
     "jwt": _c(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\b"),
     # presign URL의 서명·임시 자격증명. 외부로 공유되는 값이라 LLM 쪽으로 돌려보내지 않는다.

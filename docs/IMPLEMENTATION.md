@@ -48,6 +48,7 @@
 - 구조 규칙(위반 시 `PlanInvalid`, 코드 목록): 유일한 step id, `depends_on`·`check_for`는 앞선 step만 가리킴, 가드가 막은 명령 금지, 모델이 붙인 종류와 가드 판정 불일치 금지(예: `cli`인데 manual 명령), 변경 step마다 같은 phase 안에서 뒤따르는 확인 step(읽기), `poll`은 읽기 명령과 간격·최대 시간·완료 조건 필수, `iac`·`check`는 명령 없이 체크리스트, 모델 출력에 민감값이 있으면 거부, plan·phase당 step 상한.
 - `irreversible` step이 있는 phase는 서버가 게이트를 켜고 잠근다(`gate_locked`). 근거 없는(폴백) 명령은 `grounded=False`이고 읽기/변경과 무관하게 다른 사람의 승인이 필요하다(`Step.needs_other_approval`). 분류가 애매한 명령은 가드가 변경으로 분류한다.
 - 후처리(`postprocess.apply_postprocess`, D-33): 변경 step의 `impact.preflight` 읽기 step을 그 phase 맨 앞에 넣고(변경 명령의 옵션·대상에서 인자를 복사해 만들고 가드를 통과한 문서 근거의 읽기 명령일 때만, 못 만들면 `preflight_not_inserted` 경고), `iac_managed`이면 `impact.iac` 변경의 확인 step 뒤에 코드 동기화 확인 `iac` step과 `iac_drift`·`consider_iac_step` 경고를 더하고, `dry_run`은 `dry_run_available` 경고로 알린다. 더한 step은 `Step.auto`, 경고는 `Plan.warnings`이고 둘 다 해시에 들어간다. 더한 뒤 크기 상한을 다시 검사한다(`plan_too_large_after_auto_steps`).
+- 대화 압축(`ToolLoop.stage(compact=True)`): 윤곽 단계와 phase 단계가 수락되면 그 단계의 중간 대화(검색 결과, 실패한 제출, 오류 결과)를 버리고 수락된 제출만 짧게 남긴다. 다음 요청에는 서버가 수락된 윤곽 요약, 앞선 phase의 step 요약, `search_docs`로 찾은 문서 명령 목록(`ToolLoop.docs_seen`)을 다시 준다. 호출마다 대화 전체가 다시 실리므로 이것이 없으면 입력 토큰이 phase마다 늘어난다.
 - `plan_hash`는 사용자에게 보이는 모든 내용(제목, 게이트, 롤백 포함)과 step 해시의 순서를 묶는다(승인 잠금, T6). 실제 값 복원본의 확인은 승인 엔진(T6)이 맡는다.
 
 ### 계획 에이전트 (`app/planner/agent.py`, 프롬프트 `app/planner/prompts.py`, D-32)
@@ -84,7 +85,53 @@
 - 지연: 벡터 질의 약 0.25초, 리랭크 약 1초.
 - 한계: 이 계정에서는 Cohere 임베딩과 Bedrock 리랭크 모델에 권한이 없다(2026-11-04 확인).
 
-## 3. 관측(Trace)과 평가
+### 계획 생성 흐름 (`app/planner/pipeline.py`)
+- `PlanPipeline.run(text)`: 접수(`Intake`) → 계획 에이전트(`PlanningAgent`) → 리뷰어(`Reviewer`) → step별 근거(`step_evidence`)를 이어 붙이고 결과를 네 상태로 모은다: `reject`(입력 가드 차단·범위 밖, 안내문 포함), `clarify`(접수의 모호 표현 또는 계획 에이전트의 되묻기), `plan`(검증된 Plan, 리뷰어 체크리스트·위험 등급·요약, 근거), `stopped`(모델·한도·검증 때문에 중단, 사람에게 넘김). 리뷰어 실패는 계획을 막지 않는다. 승인 엔진(T6)이 이 결과를 받는다. 이 모듈은 아무것도 실행하지 않는다.
+- 접수(`intake.py`, D-30·D-38): 입력 가드 → 마스킹 → READ 모델(범위·서비스·의도·정규화 질의·모호 표현 해소, 구조화 출력) → 서버 검증. 필수 값 누락은 묻지 않고(계획 에이전트가 확인 후 묻는다), 모델의 범위 밖 판정은 서버가 인프라 근거(마스킹된 플레이스홀더, 용어 사전 표현)를 보면 `scope_override`로 뒤집는다.
+
+### 실패 분석 에이전트 (`app/planner/failure.py`, D-37)
+- 입력: 실패한 step(종류, 읽기/변경, 마스킹된 명령, 영향·플래그, 되돌릴 수 없음 여부), phase, 의존·확인 step, 시도 횟수, 서버 분류(`server_hint`), 실행 결과(stderr·stdout을 `sanitize_untrusted`로 마스킹·시크릿 제거·지시문 제거·데이터 틀 처리). 모델은 SUB, 도구는 읽기 도구 3개와 제출 통로 `submit_analysis`(계획의 `request_clarification`, `submit_phase`는 없음).
+- 서버 분류(`classify_error`): throttled, permission, quota, dependency, already_exists, not_found, timeout, conflict, invalid_argument, unknown(정규식, 앞의 것이 우선).
+- 추천 좁히기: `retry`는 서버·모델 분류가 모두 일시적(throttled, timeout, conflict, unknown)이고 시도 3회 미만일 때만. `skip`은 뒤 step이 의존하지 않을 때만. 좁혀지면 대안이 있으면 `replan`, 없으면 `abort`이고 `adjustments`에 이유 코드(`retry_not_allowed:<분류>`, `retry_limit_reached`, `skip_has_dependents:<ids>`, `irreversible_step`). 변경 step이 timeout·unknown이거나 되돌릴 수 없으면 `needs_state_check`, 계획의 확인 step id는 `check_step_ids`.
+- 대안 step: `alt-` 접두사, 계획의 id와 충돌 금지, 자기 완결. 제출될 때마다 `build_plan`(복구용 phase 하나)으로 검증하고 오류 코드를 돌려줘 고치게 한다(수정 기회 2회). 통과한 대안은 후처리(사전 점검 삽입, IaC 동기화)까지 거친 `Step`으로 `FailureAnalysis.alternatives`에 담기고 실행되지 않는다.
+- 중단 처리와 대화 루프는 계획 에이전트와 같다(`toolloop.ToolLoop`: 읽기 도구, 수정·재요청 한도, 누출 시 중단, 출력이 잘리면 재요청, `compact`로 단계가 끝나면 중간 대화 압축). 프롬프트는 계획 프롬프트의 "고정 사실", "step 규칙", "서버 오류 코드" 절을 재사용한다.
+
+### 실행기 (`app/executor/`, D-36)
+- **인터페이스(`base.py`):** `ExecutionRequest`(요청 id, 세션·plan·step id, 종류, `masked_command`, 실제 값 `command`, `command_digest`, 타임아웃)와 `ExecutionResult`(상태 ok/failed/timeout, 종료 코드, stdout·stderr 원문, 소요 시간, `mock`, 실행기 이름, notes)는 `to_wire`/`from_wire`로 직렬화된다. `Executor.execute(request, verdict=, approved_by_other=, confirmations=)`가 유일한 실행 경로다: `assert_server_executable` → 승인된 내용과 같은지(마스킹 문구·종류, 다이제스트) → 실행하는 쪽 가드 재검사(복원된 명령) → `_run`. 서브클래스가 `execute`를 재정의하거나 `_run`을 다른 곳에서 호출하면 테스트가 실패하고, 프로세스를 띄우는 모듈은 `executor/process.py`·`moto_server.py`·`guards/cli_snapshot.py`로 제한된다.
+- **프로세스(`process.py`):** 셸 없이 가드와 같은 토큰화(`_split`)로 실행한다. 환경은 비어 있는 상태에서 PATH(실행 파일 탐색)·Windows 필수 변수와 요청별 임시 HOME·AWS 설정 경로·KUBECONFIG, 호출자가 준 값만 채운다. 끝나면 임시 폴더를 지운다. 타임아웃 시 프로세스를 죽이고 출력은 100만 자로 자른다.
+- **mock(`mock.py`):** aws 명령은 시뮬레이터(`simulator.py`)가 맡는 것이면 응답을 만들고, 아니면 루프백 moto 서버(`moto_server.py`)로 보낸다. `eks describe-cluster`는 moto 응답의 버전·상태를 시뮬레이션 상태로 덮어쓴다. kubectl은 고정 응답(`kubectl_fixture.py`). 공유 상태는 `world.py`의 `MockWorld`. `seed()`가 moto에 기본 리소스(클러스터, ASG, launch template, 버킷, 합성 이름)를 만든다.
+- **시뮬레이터:** `eks update-cluster-version`(+`describe-update`, `list-updates`), `list-addons`·`describe-addon`·`update-addon`·`describe-addon-versions`·`list-insights`, `autoscaling start/describe/cancel-instance-refresh`, EKS AMI SSM 파라미터. 진행은 조회 3회째에 완료이며 컨트롤 플레인·노드 버전이 `MockWorld`를 거쳐 kubectl 응답에 보인다.
+- **연결:** `adapter.ReadRunnerAdapter`가 에이전트 읽기 도구의 `ReadCommandRunner`를 구현한다(도구 가드 + 실행기 관문 + 실행기 재검사, 실패 시 오류 출력을 돌려줘 모델이 원인을 본다). `factory.build_executor`는 `EXECUTOR_MODE`(기본 mock)만 지원한다.
+
+## 3. 세션·승인·웹 (`app/session/`, `app/web/`, D-39)
+- **상태(`states.py`):** 세션 `draft → plan_review → plan_approved → applying ⇄ paused → completed | aborted`(`paused → plan_review`는 부분 재계획), step `pending → approved → running → done | failed`, manual·iac는 `approved → awaiting_report → awaiting_confirm → done`, 실패 후 `failed → pending(재시도) | skipped | aborted`. 표에 없는 전이는 `InvalidTransition`.
+- **저장(`store.py`, SQLite):** 세션, 참여자(멤버 토큰 해시), plan 버전(JSON + 해시, 읽을 때 재계산, 다르면 `PlanTampered`), step 상태(시도 횟수, `expect`로 전이 선점), 승인(추가만, 같은 사람·대상 중복 무시, 재시도 시 무효 처리는 이벤트로 남김), 실행 결과(마스킹·시크릿 제거 텍스트만), 이벤트(추가만), 세션 부가 정보(리뷰·근거 JSON). 저장되는 텍스트는 모두 마스킹된 것이다.
+- **승인(`approval.py`):** `submit_plan`, `approve_plan`, `start_apply`, `approve_step`(→ `StepGrant` 또는 manual·iac는 None), `approve_gate`, `provide_reason`, `confirm_requirement`, `auto_approve_check`, `grant_for`(승인 기록에서 재계산), `pending_requirements`, `reset_step_approvals`. 모든 허용·거부는 `AuditLog` stage `approval`에 사유 코드로 남는다.
+- **apply(`apply.py`):** `run_step`(승인 자격 재계산 → `running` 선점 → `Executor.execute` → 결과 정리·저장 → 변경이면 확인 step 자동 실행), 실패 시 세션 `paused` + 분석기(선택, 호출 실패는 무시), `decide`(재시도·건너뛰기·중단 규칙), `report_done/failed`·`confirm_report`, `poll_once/poll_complete/run_poll`, `recover_after_restart`, `preview_read`(plan 검토 중 문서 근거 읽기 명령만).
+- **수정·재계획(`edit.py`, `replan.py`):** `PlanEditor`가 `Plan → PlanDraft → build_plan`으로 다시 만들고(서버가 넣은 step 표시 유지), `ReplanEngine`이 일시정지와 완료 step 잠금·상태 승계·게이트 승인 이월을 맡는다.
+- **서비스(`service.py`):** 세션별 `Masker`(재시작 시 `mapping_store`에서 복원, 읽을 수 없으면 중단, 종료·취소 시 삭제), 메시지 종류·필드 검증(`handle`), 화면용 스냅샷(`view`, 여기서만 실제 값 복원), 계획 생성·poll 백그라운드 스레드, 리스너 알림.
+- **작업 이력·초대(D-43):** `service.history`가 토큰으로 인증된 세션의 제목·상태·절차 상태 수·위험 등급을 모아 최근 갱신 순으로 돌려준다(제목은 가능하면 실제 값으로 복원). 세션 제목은 만들 때 필수로 받아 마스킹해 저장한다. `store.rotate_invite`는 새 초대 토큰을 만들고 이전 해시를 덮어쓴다.
+- **대화 맥락(D-46):** `service._combined`가 첫 요청, 에이전트의 되묻기 질문(`kind=clarify`로 대화 기록에 남음), 사용자의 답을 `[이전 질문]`·`[추가 정보]`로 이어 붙여 계획 생성에 보낸다(길면 오래된 질문부터 뺌, 입력 횟수 상한 6). `Glossary`의 모호 항목은 `exclude`에 적은 복합어(ssh키, 키 페어 등)를 제거한 문장에서만 일치를 본다. `service.history`는 `participants`(작업자 수)를 포함한다.
+- **가드 완화(D-45):** `agent_limits.RepeatedCall`(`MAX_REPEAT_NOTICES`=2)은 반복 호출을 `ReadToolbox.call`에서 오류 결과(`repeated_call` + 안내)로 바꾸고, 넘으면 `BudgetExceeded`로 중단한다. `patterns.PUBLIC_ACCOUNT_IDS`의 12자리는 `account_id` 패턴의 부정 선행 검사로 제외한다. `ToolLoop`는 글(텍스트) 누출은 즉시 중단하고, 도구 호출 인자의 누출은 그 호출을 실행하지 않고 `tool_input_contains_sensitive_value` 오류로 돌려주며 대화 기록의 입력은 `{}`로 비운다(수정 기회 `max_repairs`).
+- **실패 분석의 대화 표시(D-45):** `ApplyEngine`이 실패(`failed`)·분석 끝(`analysis`) 이벤트를 `on_event`로 알리면 서비스가 대화에 에이전트 메시지를 싣고 분석 중에는 `analyzing`(절차 id)을 설정한다. 스냅샷의 `analyzing`이 있으면 화면이 "답변을 생성 중입니다"를 보인다. `run_read` 메시지는 읽기 절차에 `approve_step`과 `run_step`(poll은 `start_poll`)을 이어서 호출한다.
+- **중단 안내와 다시 시도(D-44):** `pipeline.stop_message(code, detail)`가 중단 원인을 한국어로 바꾼다(반복된 도구 이름, 누출 종류 이름만 덧붙이고 값은 없다). `PlanResult.detail`·`PipelineResult.detail`·`PlanInvalid.detail`·`LoopStop.detail`·`BudgetExceeded.detail`이 이 상세를 나르고 감사 기록에는 `agent_stopped:<코드>:<상세>`로 남는다. 서비스의 `retry_generation`은 `stopped` 상태의 세션에서 요청자만 새 입력 없이 같은 내용으로 다시 시도한다("다시 시도" 표시는 모델로 가는 문장에서 빠진다).
+- **대화(D-42):** `service._answer`가 되묻기·중단·거절 뒤의 추가 입력을 받아(요청자만, 입력 가드·마스킹) 마스킹된 요청에 `[추가 정보]`로 이어 붙여 계획 생성을 다시 시작한다. 대화 기록(`thread`)과 `generating` 상태는 세션 부가 정보에 저장되고, 스냅샷의 `thread`·`session.title`(마스킹된 제목)로 나간다.
+- **웹(`app/web/`):** `server.py`(FastAPI, REST 3개 + WebSocket `/ws/{sid}`, 첫 메시지 인증, Origin 검사, 상한), `factory.py`(실제 Bedrock + mock 실행기 구성, 세션마다 마스커·LLM·예산 분리), `main.py`(`python -m app.web.main`, 기본 127.0.0.1:8000).
+- **WebSocket 메시지:** `approve_plan`, `start_apply`, `approve_step`, `provide_reason`, `confirm_requirement`, `approve_gate`, `run_step`, `start_poll`, `poll_complete`, `report_done`, `report_failed`, `confirm_report`, `decide`, `preview_read`, `pause`, `abort`, `edit`(`add_step`·`update_step`·`delete_step`·`move_step`·`set_gate`). 응답은 `{"type":"result","ok":...,"code":...}`, 상태는 `{"type":"view","data":...}`로 모든 연결에 보낸다.
+
+### 화면 (`app/static/index.html`, D-41)
+- 빌드 도구 없는 단일 HTML. 서버는 `GET /`로 내려주고 CSP(`default-src 'self'`)와 `nosniff`를 붙인다. 외부 리소스·CDN을 쓰지 않는다.
+- 렌더링은 작은 DOM 도우미(`h()`)로만 한다. 값은 텍스트 노드로만 들어가므로 모델 출력·실행 결과에 HTML이 있어도 해석되지 않는다(`innerHTML` 등 사용 금지를 테스트가 확인). 서버가 보내는 스냅샷(`view`)을 매번 통째로 다시 그리고, 입력 중에는 새 스냅샷을 보류했다가 포커스를 잃으면 그린다(입력 내용이 사라지지 않게).
+- 구조(D-43): 세로 3분할. 좌측(`＋ 새 작업`, 작업 이력, 작업자, 초대 링크 만들기), 중앙(제목·상태·위험 등급, plan 승인, 리뷰, 절차 목록, 활동 로그는 접어 둠), 우측(대화와 입력창). 입력창은 상태에 따라 요청(새 작업, 제목은 중앙에서) / 답하기(되묻기·중단·거절 뒤, 요청자만) / 비활성(생성 중, 계획 검토 이후)이다. 1000px 이하에서는 상단 탭(작업·절차·대화)으로 바뀐다.
+- 화면 개정(D-46): 이력은 한 줄(제목)과 오른쪽 끝 상태 점(`dot plan|live|livewait|paused|done|aborted`, live는 깜빡임)이며 상세는 툴팁이다. 절차 줄 이름 옆에 승인(☐→☑)·실행(▶→⟳→✔) 아이콘을 두고 읽기 절차는 ▶ 하나(`run_read`)다. 상태 글자는 아이콘이다(✔ 완료, ✖ 실패, ↷ 건너뜀, ⊘ 중단됨, ⟳ 진행 중, ✎ 보고 작성, ⏳ 확인 대기). 펼친 상세에는 입력이 필요한 것만 남는다. Apply 탭은 apply를 진행한 뒤(applying·paused·completed)에만 있다. Apply 탭 아래에 터미널 형태의 실행 로그(`terminalPanel`: 시각·주체·절차·결과, `$ 명령`, 출력)가 있고 `column-reverse` 스크롤로 최신이 보인다.
+- Plan / Apply 탭(D-45): Plan 탭은 검토·수정·승인(`plan 일괄 승인`, 승인 뒤 `apply 진행 →`), Apply 탭은 plan 승인 뒤에 생기고 같은 절차를 수정 없이(드래그·삽입·편집 없음) 승인·확인·실행한다. apply가 시작되면 모든 참여자의 화면이 Apply 탭으로 넘어간다. 모든 절차 줄 앞에 실행 주체 표시 `[AGENT]`(서버가 실행: 읽기·변경·폴링) / `[MANUAL]`(사람이 실행: 수동 명령·IaC·수동 체크)가 있다. 읽기 절차(문서 근거, 추가 조치 없음)는 `확인` 한 번(`run_read`)으로 진행한다. 작업자 목록과 초대 링크는 제목 아래에, 대화 헤더에는 작업 제목을 둔다.
+- 절차 목록: 한 줄씩 접힌 행(⋮⋮ 손잡이, id, 제목, 배지, 상태)이고 눌러서 상세·수정·승인 버튼을 펼친다. apply 중에는 처리할 차례인 절차를 자동으로 펼친다. 계획을 수정할 수 있는 동안(plan 검토·승인 후·일시정지)에만 행이 `draggable`이고, 같은 phase 안에서 대상 행 앞(또는 phase 끝 영역)에 놓으면 `move_step`(`after` = 바로 앞 절차 id, 맨 앞이면 null)을 보낸다. 다른 phase로는 옮길 수 없다. 절차 추가는 유형(CLI·수동·IaC·체크)과 선택적 확인 명령을 받아 `add_steps`로 한 번에 보낸다.
+- 브라우저에는 자격(세션 id, 닉네임, 멤버 토큰)만 `localStorage`의 `creds`에 둔다. 이력의 내용(제목, 상태, 위험 등급, 절차 결과 요약)은 `POST /api/history`로 서버 DB에서 읽는다(토큰이 맞는 항목만 내용을 주고, 아니면 `valid: false`, 서버에 없는 세션의 자격은 브라우저가 지움). 탭이 보고 있는 항목은 `sessionStorage`에 둔다. 그래서 탭 두 개를 다른 닉네임으로 열어 4-eyes를 확인한다. 초대 링크(`/?s=...&i=...`)는 요청자가 `create_invite`로 그때그때 만들고(해시만 저장, 새로 만들면 이전 링크 무효), 링크로 들어오면 닉네임만 입력해 참여한다.
+- 버튼의 활성·비활성은 안내일 뿐이다(예: 요청자에게 plan 승인이 꺼짐). 실제 거부는 항상 서버가 한다. 서버가 거부하면 코드를 한국어로 바꿔 토스트로 보인다.
+- 테스트: `tests/test_ui.py`(정적), `tests/test_ui_render.py` + `tests/ui_harness.js`(node의 가짜 DOM에서 실제 서비스 스냅샷을 그려 버튼 상태와 전송 메시지를 확인, 브라우저가 아니므로 레이아웃·스타일은 확인하지 못한다).
+- 실제 브라우저 확인(수동, pytest 아님): `python tests/browser/serve_fake.py`(가짜 파이프라인·스크립트 실행기, 포트 8124)를 띄우고 `node tests/browser/cdp.js <폴더>`가 Chrome(DevTools Protocol, 외부 패키지 없음)으로 새 작업(제목 없이 보내면 막힘) → 되묻기 → 답하기 → plan → 절차 추가 → 실제 DragEvent로 순서 변경 → 초대 링크 만들기 → 다른 탭 참여·승인 → apply 시작 → DB 이력 조회 → 모바일 폭까지 조작하며 스크린샷을 남긴다. Chrome 경로는 `CHROME_PATH`로 바꾼다. 이 확인에서 `after: null`을 서버가 거부하는 버그를 발견해 고쳤다(가짜 DOM 테스트는 보내는 메시지만 보므로 놓쳤다).
+
+## 4. 관측(Trace)과 평가
 ### 관측
 - 백엔드: `TRACE_BACKEND=off|local|langfuse`. 기본은 `local`(SQLite 이력과 연결된 로컬 트레이스). Langfuse는 **개발 단계 한정**이고 명시적으로 켠 경우에만 쓴다(사용자 결정 2026-11-04). self-hosted를 권장하고 cloud는 개발 한정이다. 운영 전환 전에 재검토한다(Phase 3 인증과 함께).
 - **트레이스 경계:** 트레이스에는 마스킹 경계 안쪽 데이터(LLM이 보는 것)만 기록한다. 원본 사용자 입력, 복원된 실제 값, 마스킹 매핑, 실행 결과 원문, `.env` 값은 어떤 백엔드에도 보내지 않는다. 트레이싱은 마스킹 이후의 LLM 호출 래퍼와 마스킹된 도구 결과에만 붙이고, 요청·세션 최상위 span에는 입력 원문을 넣지 않는다(세션 ID, 길이 같은 메타만).
@@ -102,5 +149,5 @@
 - **RAGAS는 평가 전용 환경(`.venv-eval`, `requirements-eval.txt`)에서 실행한다.** 앱 런타임 패키지(tenacity, rich 등)를 다운그레이드하기 때문이다. Bedrock과의 호환은 구현 시 확인한다.
 - 리포트는 `eval/reports/`에 JSON과 요약으로 저장하고, 목표 수치와 이전 실행을 비교한다. 평가 실행을 Langfuse에 기록하는 것은 선택이다(개발 단계).
 
-## 4. 참고 예제 (`ref/`)
+## 5. 참고 예제 (`ref/`)
 스택을 고를 때 참고한 교육 예제다(사용자 요청). 앱이 import하지 않으며 구성은 그대로 따르지 않았다(예: 검색은 평가로 결정, D-14). 구현할 때 참고할 예제: 검색 `hybrid`, `rerank_demo`, `rag_chain`, 구조화 출력 `structured_output`, 에이전트 `react_agent`, `plan_and_execute`, `rag_agent`, 승인 `hitl_flow`, 체크포인트 `checkpointer_basic`, 가드·마스킹 `guards_*`, `masking_middleware`.

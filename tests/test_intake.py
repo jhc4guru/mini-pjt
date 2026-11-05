@@ -25,7 +25,7 @@ class FakeBedrock:
 
 
 def model_reply(**over):
-    base = {"in_scope": True, "services": ["ec2"], "intent": "read", "normalized_query": "보안 그룹 조회", "resolutions": [], "missing": []}
+    base = {"in_scope": True, "services": ["ec2"], "intent": "read", "normalized_query": "보안 그룹 조회", "resolutions": []}
     base.update(over)
     return base
 
@@ -97,10 +97,11 @@ def test_model_cannot_resolve_terms_the_server_did_not_flag():
     assert r.decision == "proceed" and r.interpretations == ()
 
 
-def test_missing_parameters_become_questions():
+def test_model_supplied_missing_fields_are_ignored_and_never_become_questions():
+    """필수 값 누락은 접수 단계가 아니라 계획 에이전트가 읽기 도구로 확인한 뒤 묻는다(D-38). 모델이 보낸 missing은 무시한다."""
     intake, _, _ = make([model_reply(intent="change", missing=[{"param": "port", "question": "열 포트를 알려주세요."}])])
     r = intake.process("보안 그룹에 인바운드 열어줘")
-    assert r.decision == "clarify" and r.questions == ({"param": "port", "question": "열 포트를 알려주세요."},)
+    assert r.decision == "proceed" and r.questions == ()
 
 
 def test_model_output_with_real_values_is_rejected():
@@ -145,3 +146,16 @@ def test_pod_is_not_confused_with_server():
     r = intake.process("web-0 pod 로그 보여줘")
     assert r.decision == "proceed" and r.questions == ()
 
+
+
+@pytest.mark.parametrize("text", ["prod-db 클러스터를 업그레이드하는 계획을 세워줘. 인프라는 Terraform 으로 관리해", "보안 그룹 규칙을 정리해줘", "S3 버킷 정책 확인"])
+def test_a_model_scope_rejection_is_overridden_when_the_server_sees_infrastructure_evidence(text):
+    """모델이 범위 밖이라 해도(실측: Terraform을 언급한 업그레이드 요청을 거절) 인벤토리 이름이나 용어 사전 표현이 있으면 거절하지 않는다."""
+    intake, _, _ = make([model_reply(in_scope=False, services=[])])
+    r = intake.process(text)
+    assert r.decision == "proceed" and r.reasons == ("scope_override",)
+
+
+def test_scope_rejection_stands_without_any_infrastructure_evidence():
+    intake, _, _ = make([model_reply(in_scope=False, services=[])])
+    assert intake.process("회사 근처 맛집 추천해줘").decision == "reject"

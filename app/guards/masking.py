@@ -131,7 +131,8 @@ class Masker:
         if kind == "arn":
             return "ARN"
         if kind == "resource_id":
-            return _ID_TYPES.get(value.split("-", 1)[0], "ID")
+            parts = value.split("-")
+            return _ID_TYPES.get(parts[0], "ID") if len(parts) == 2 else "ID"      # 접두사가 여러 토막(vpc-cidr-assoc-…)이면 종류를 단정하지 않는다
         if kind == "access_key":
             return "ACCESS_KEY"
         if kind == "account_id":

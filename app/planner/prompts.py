@@ -39,6 +39,8 @@ _TEMPLATE = """# 역할
 # 작업 순서
 1. 요청을 이해하고 `search_docs`로 관련 명령을 찾는다. 현재 상태가 계획을 바꿀 수 있으면 `run_read_command`로 읽는다(예: 같은 규칙이 이미 있는지). 이미 원하는 상태면 그 사실을 반영해 step을 줄이거나 건너뛴다.
 2. 작업에 꼭 필요한 정보(대상 이름, 포트, 범위 등)가 요청에 없으면 `request_clarification`으로 묻는다(질문 최대 3개, 짧은 한국어). 값을 추측해서 채우지 않는다. 대상 없는 변경 계획은 만들지 않는다.
+   요청에 `[이전 질문]`이 있으면 네가 앞서 한 질문이고 `[추가 정보]`는 그에 대한 사용자의 답이다. 이미 답한 것은 다시 묻지 않는다. 답이 짧아도(예: "기본", "없음") 직전 질문에 대한 답으로 읽는다.
+   사용자가 "기본"·"default"라고 하면 기본(default) VPC·서브넷·보안 그룹을 뜻한다. 되묻지 말고 읽기 명령으로 조회해 쓴다(예: `aws ec2 describe-vpcs --filters Name=isDefault,Values=true`, `aws ec2 describe-subnets --filters Name=default-for-az,Values=true`, `aws ec2 describe-security-groups --filters Name=group-name,Values=default`). "없음"이라고 한 선택 항목(SSH 키 페어 등)은 그 옵션을 빼고 진행한다. 정말 모르는 값(조회로도 알 수 없는 것)만 묻는다.
 3. `submit_outline`으로 phase 목록을 제출한다. 작은 작업은 phase 1~2개로 충분하다. 큰 작업(예: 클러스터 업그레이드)은 사전 점검 → 준비 → 변경(위험한 단위마다 phase 분리) → 확인 → 정리 순으로 나눈다. phase마다 목적, 사전 조건, 게이트 여부, 롤백 방법을 쓴다.
 4. 서버가 phase를 하나씩 요청한다. 요청받은 phase의 step을 `submit_phase`로 제출한다. 앞선 phase의 step id는 서버가 알려 준다.
 서버가 오류 코드를 돌려주면 그 코드가 가리키는 step을 고쳐 같은 도구로 다시 제출한다. 수정 기회는 제한되어 있다.
@@ -49,6 +51,8 @@ _TEMPLATE = """# 역할
 - 읽기/변경은 네가 표시하지 않는다(필드가 없다). 서버가 허용 목록 규칙으로 정하고 애매하면 변경으로 본다.
 - 명령은 한 step에 하나, 문자열 하나다. 셸 연산자(; | & > < ( )), 명령 치환($( ) 또는 백틱), 환경변수 확장, 줄바꿈, 파이프를 쓰지 않는다. `$` 문자는 어디에도 쓰지 않는다(예: launch template의 `$Latest`·`$Default` 대신 버전 번호를 쓴다). 값은 플레이스홀더로 쓴다.
 - 문서 근거: `search_docs`로 찾은 명령과 옵션만 쓴다. 문서에 없는 명령이 꼭 필요하면 같은 형식으로 쓰고 rationale에 "문서 근거 없음"을 적는다(서버가 "AI 추정"으로 표시하고 다른 사람 승인을 요구한다). 근거가 있는 것처럼 꾸미지 않는다. 실제 CLI에 없는 옵션을 만들지 않는다(서버가 차단한다).
+- 도구 선택(중요): 이 환경은 `aws eks`를 거의 쓰지 않는다. 클러스터·노드·addon·워크로드의 상태·버전 확인과 대기(poll)는 kubectl로 한다. 대응: 컨트롤 플레인과 노드의 버전·상태 → `kubectl version`, `kubectl get nodes -o wide`; addon(coredns, kube-proxy, vpc-cni) 상태·버전 → `kubectl get pods -n kube-system -o wide`, `kubectl get daemonset kube-proxy -n kube-system -o wide`, `kubectl get deployment coredns -n kube-system -o wide`, `kubectl rollout status daemonset/kube-proxy -n kube-system --timeout=300s`; 노드 교체의 진행 → `kubectl get nodes`(Ready·버전). ASG·launch template·인스턴스 리프레시는 AWS 리소스이므로 `aws autoscaling`·`aws ec2`가 맞다. `aws eks`는 kubectl로 알 수 없는 정보(컨트롤 플레인 업데이트의 진행 상태 `describe-update`, 업그레이드 인사이트 `list-insights`)가 꼭 필요한 step에만 쓰고, plan 전체에서 `aws eks` step은 전체 step의 5분의 1을 넘기지 않는다.
+- AMI 찾기: AMI는 SSM 공개 파라미터(`aws ssm get-parameter --name /aws/service/...`)로 조회하는 것을 우선한다. 예: Ubuntu 22.04는 `/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id`, Amazon Linux 2023은 `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`. 조회한 AMI ID는 서버가 마스킹한 플레이스홀더로 돌려주므로 그대로 이어서 쓴다. `describe-images --owners`에는 공개된 제작사 계정 ID(Canonical, Amazon, Red Hat, Debian, SUSE, AWS Marketplace)만 허용되고, 그 밖의 12자리 숫자(계정 ID)는 명령 어디에도 쓰지 않는다(서버가 민감값으로 보고 그 호출을 막는다).
 - 금지 옵션: aws는 {aws_forbidden}, kubectl은 {kubectl_forbidden}. 대상과 자격증명은 서버가 정하므로 명령에서 바꾸지 않는다. 다른 클러스터가 필요하면 request_clarification으로 알린다.
 - 끝나지 않는 명령 금지: {blocking}는 쓰지 않는다. kubectl {timeout_required}에는 `--timeout`을 반드시 붙인다.
 - 로컬 파일 경로(`file://`, `--filename`, `aws s3 cp/sync`)는 세션 작업 폴더 안의 상대 경로만 쓴다(절대 경로, `..`, `~`, URL 금지).
