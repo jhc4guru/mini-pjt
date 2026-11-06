@@ -29,8 +29,10 @@ commands:
 
 ## create-security-group
 - 설명: 보안 그룹 생성. 이름과 설명이 필수. VPC를 지정하지 않으면 기본 VPC에 만들어진다.
-- 키워드: SG 생성, 보안그룹 만들기, 방화벽 그룹 새로 만들기, create security group
+- 키워드: SG 생성, 보안그룹 만들기, 방화벽 그룹 새로 만들기, create security group, 태그 달아서 생성, Name 태그, 태그 붙이기, 이름 태그, 생성하면서 태그
 - 예시: `aws ec2 create-security-group --group-name <NAME_1> --description "<NAME_2>" --vpc-id <VPC_1>`
+- 예시(생성하면서 태그): `aws ec2 create-security-group --group-name <NAME_1> --description "<NAME_2>" --vpc-id <VPC_1> --tag-specifications 'ResourceType=security-group,Tags=[{Key=Name,Value=<NAME_3>}]'`
+- 주의: 태그는 만들 때 `--tag-specifications`로 함께 붙이면 한 단계로 끝나고 태그 없는 상태가 남지 않는다. 이미 만든 리소스에 나중에 붙일 때만 `create-tags`(tags 문서)를 쓴다.
 - 확인: describe-security-groups
 
 ## authorize-security-group-ingress

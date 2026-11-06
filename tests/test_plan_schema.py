@@ -211,3 +211,42 @@ def test_declared_irreversible_iac_step_locks_the_gate_but_cannot_unlock_documen
     kill = draft(([S("kill", command=f"aws ec2 terminate-instances --instance-ids {inst}", irreversible=False),
                    S("v", command=f"aws ec2 describe-instances --instance-ids {inst}", check_for="kill")], {"gate": False}))
     assert build_plan(kill, *env).phases[0].gate_locked
+
+
+def test_gate_of_an_irreversible_phase_is_released_only_by_a_human_reason_never_by_the_model(env):
+    """D-64: 되돌릴 수 없는 step이 있는 단계의 게이트는 사람이 적은 사유(gate_waivers)와 gate=false가 함께 있을 때만 해제된다. 모델 출력만으로는 해제되지 않는다."""
+    _, masker = env
+    inst = masker.mask("i-0abc123def4567890")
+    d = draft(([S("kill", command=f"aws ec2 terminate-instances --instance-ids {inst}"),
+                S("v", command=f"aws ec2 describe-instances --instance-ids {inst}", check_for="kill")], {"gate": False}))
+    assert build_plan(d, *env).phases[0].gate                                                  # 모델이 gate=false로 써도 켜진다
+    assert build_plan(d, *env, gate_waivers={"p1": "  "}).phases[0].gate                          # 빈 사유는 해제가 아니다
+    waived = build_plan(d, *env, gate_waivers={"p1": "사람이 직접 진행"})
+    ph = waived.phases[0]
+    assert not ph.gate and not ph.gate_locked and ph.gate_waiver == "사람이 직접 진행" and any(s.irreversible for s in ph.steps)
+    kept = draft(([S("kill", command=f"aws ec2 terminate-instances --instance-ids {inst}"),
+                   S("v", command=f"aws ec2 describe-instances --instance-ids {inst}", check_for="kill")], {"gate": True}))
+    assert build_plan(kept, *env, gate_waivers={"p1": "사유"}).phases[0].gate                       # 게이트를 켜 둔 단계에는 사유가 남지 않는다
+    assert plan_hash(waived) != plan_hash(build_plan(d, *env))                                    # 해제는 해시(승인 잠금)에 반영된다
+
+
+@pytest.mark.parametrize("title", ["Terraform 코드에서 kubernetes_version을 1.36으로 변경", "컨트롤 플레인 업그레이드 적용", "EKS control plane upgrade apply",
+                                   "terraform destroy 로 클러스터 정리", "클러스터 삭제"])
+def test_irreversible_looking_iac_step_without_the_mark_is_rejected(env, title):
+    """D-64: 표시가 빠지기 쉬운 되돌릴 수 없는 iac 작업은 `irreversible` 표시가 없으면 검증 실패로 돌려 모델이 고치게 한다."""
+    _, masker = env
+    chk = S("c", command=masked(masker, "aws ec2 describe-vpcs"), check_for="up")
+    with pytest.raises(PlanInvalid) as e:
+        build_plan(draft(([S("up", kind="iac", title=title, checklist=["코드 변경"]), chk], {})), *env)
+    assert "irreversible_not_marked:up" in e.value.codes
+    ok = build_plan(draft(([S("up", kind="iac", title=title, checklist=["코드 변경"], irreversible=True), chk], {})), *env)
+    assert ok.phases[0].gate and ok.phases[0].gate_locked
+
+
+@pytest.mark.parametrize("title", ["Terraform 코드 확인", "add-on 버전 변경", "노드 AMI 변경", "컨트롤 플레인 상태 확인"])
+def test_ordinary_iac_steps_are_not_flagged_as_irreversible(env, title):
+    _, masker = env
+    chk = S("c", command=masked(masker, "aws ec2 describe-vpcs"), check_for="up")
+    plan = build_plan(draft(([S("up", kind="iac", title=title, checklist=["코드 변경"]), chk], {})), *env)
+    assert not plan.phases[0].gate_locked
+

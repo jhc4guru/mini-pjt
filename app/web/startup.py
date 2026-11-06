@@ -56,4 +56,4 @@ def check_bind(host: str, env: dict | None = None) -> str | None:
     if is_loopback(host) or e.get("ALLOW_NON_LOOPBACK") == "1":
         return None
     return (f"`--host {host}`는 루프백이 아닙니다. 이 앱의 인증은 닉네임·멤버 토큰뿐이라 다른 호스트에 열려면 ALLOW_NON_LOOPBACK=1을 명시해야 합니다"
-            "(컨테이너에서는 호스트 쪽 포트를 -p 127.0.0.1:8080:8000처럼 127.0.0.1로만 여세요).")
+            "(컨테이너에서는 호스트 쪽 포트를 -p 127.0.0.1:8000:8000처럼 127.0.0.1로만 여세요).")

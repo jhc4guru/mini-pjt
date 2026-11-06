@@ -20,7 +20,7 @@ from app.guards.command_guard import CommandGuard
 from app.guards.refs import find_refs, output_not_json
 from app.guards.input_guard import check_user_input
 from app.guards.masking import Masker
-from app.planner.schema import STEP_ID, Plan, PlanDraft, PhaseDraft, PollSpec, StepDraft, StepKind, build_plan
+from app.planner.schema import STEP_ID, Plan, PlanDraft, PhaseDraft, PollSpec, StepDraft, StepKind, build_plan, needs_irreversible_mark
 from app.session import states
 from app.session.store import SessionStore
 
@@ -81,6 +81,7 @@ class DPhase(BaseModel):
     preconditions: list[str] = Field(default_factory=list, max_length=8)
     gate: bool = False
     gate_reason: str = Field(default="", max_length=160)
+    gate_waiver: str = Field(default="", max_length=160)       # 되돌릴 수 없는 step이 있는 phase의 게이트를 끈 사유(D-64)
     rollback: str = Field(default="", max_length=300)
     steps: list[DStep] = Field(default_factory=list)
 
@@ -444,7 +445,7 @@ class ScratchPad:
     def _update_phase(self, sid: str, sc: Scratch, m: dict, locks: dict) -> dict:
         ph = self._phase(sc, m.get("phase"))
         fields = m.get("fields") or {}
-        allowed = {"title", "purpose", "preconditions", "gate", "gate_reason", "rollback"}
+        allowed = {"title", "purpose", "preconditions", "gate", "gate_reason", "gate_waiver", "rollback"}
         if set(fields) - allowed:
             raise ScratchError("field_not_editable")
         masker = self._masker_for(sid)
@@ -462,7 +463,13 @@ class ScratchPad:
             new = DPhase(**data)
         except ValidationError:
             raise ScratchError("invalid_phase") from None
-        ph.title, ph.purpose, ph.preconditions, ph.gate, ph.gate_reason, ph.rollback = new.title, new.purpose, new.preconditions, new.gate, new.gate_reason, new.rollback
+        status = self.validate(sid, sc)
+        irreversible = any(status[x.id]["irreversible"] for x in ph.steps)
+        if new.gate or not irreversible:
+            new = new.model_copy(update={"gate_waiver": ""})                               # 게이트를 켜면(또는 해제할 이유가 없으면) 해제 사유도 지운다
+        elif not new.gate_waiver.strip():
+            raise ScratchError("gate_waiver_required")                                    # 되돌릴 수 없는 step이 있는 phase의 게이트는 사유를 적어야 끌 수 있다(D-64)
+        ph.title, ph.purpose, ph.preconditions, ph.gate, ph.gate_reason, ph.gate_waiver, ph.rollback = new.title, new.purpose, new.preconditions, new.gate, new.gate_reason, new.gate_waiver, new.rollback
         return {}
 
     def _delete_phase(self, sid: str, sc: Scratch, m: dict, locks: dict) -> dict:
@@ -517,6 +524,8 @@ class ScratchPad:
                     issues.append({"sev": "warn", "code": "checklist_required"})          # 사람이 할 일을 적지 않은 수동 절차
                 if not s.title.strip():
                     issues.append({"sev": "warn", "code": "title_required"})
+                if needs_irreversible_mark(s.kind, s.title, s.rationale, s.checklist, s.irreversible):
+                    issues.append({"sev": "warn", "code": "irreversible_not_marked"})      # 되돌릴 수 없는 작업으로 보이는데 표시가 없다(D-64)
                 if s.kind == "poll" and s.poll is None:
                     issues.append({"sev": "err", "code": "poll_spec_required"})
                 if s.kind != "poll" and s.poll is not None:
@@ -566,19 +575,21 @@ class ScratchPad:
     def promote(self, sid: str, iac_managed: bool) -> Plan:
         """확정한 절차만 plan으로 만든다. `build_plan`의 전체 검증을 다시 거친다(실패하면 `PlanInvalid`)."""
         sc = self.get(sid)
-        phases = []
+        phases, waivers = [], {}
         for p in sc.phases:
             steps = [StepDraft(id=s.id, kind=s.kind, title=s.title, command=s.command, depends_on=s.depends_on, check_for=s.check_for, poll=s.poll,
                                checklist=s.checklist, rationale=s.rationale, irreversible=s.irreversible) for s in p.steps if s.confirmed]
             if steps:
                 phases.append(PhaseDraft(id=p.id, title=p.title or p.id, purpose=p.purpose, preconditions=p.preconditions, steps=steps, gate=p.gate,
                                          gate_reason=p.gate_reason, rollback=p.rollback))
+                if p.gate_waiver and not p.gate:
+                    waivers[p.id] = p.gate_waiver
         if not phases:
             raise ScratchError("nothing_confirmed")
         summary = self._s.get_meta(sid, "plan_summary") or "확정한 절차"
         masker = self._masker_for(sid)
         frozen = frozenset(i for i, why in self.locks(sid, sc).items() if why == "done")      # 끝난 절차에는 자동 삽입을 하지 않는다(부분 재계획에서 잠긴 절차가 바뀌지 않게)
-        return build_plan(PlanDraft(summary=summary[:300], phases=phases), self._guard, masker, iac_managed=iac_managed, suppressed=frozenset(sc.suppressed), frozen=frozen)
+        return build_plan(PlanDraft(summary=summary[:300], phases=phases), self._guard, masker, iac_managed=iac_managed, suppressed=frozenset(sc.suppressed), frozen=frozen, gate_waivers=waivers)
 
     def sync_from_plan(self, sid: str, plan: Plan) -> None:
         """승격한 plan을 연습장에 맞춘다: 서버가 넣은 절차는 연습장에도 나타나 고치거나 지울 수 있고, 의존 관계도 plan과 같아진다."""
@@ -609,8 +620,8 @@ class ScratchPad:
             steps = [DStep(id=s.id, kind=s.kind, title=s.title, command=s.command, depends_on=list(s.depends_on), check_for=s.check_for, poll=s.poll,
                            checklist=list(s.checklist), rationale=s.rationale, irreversible=s.declared_irreversible, confirmed=True, origin="auto" if s.auto else "agent")
                      for s in p.steps]
-            phases.append(DPhase(id=p.id, title=p.title, purpose=p.purpose, preconditions=list(p.preconditions), gate=p.gate and not p.gate_locked,
-                                 gate_reason=p.gate_reason, rollback=p.rollback, steps=steps))
+            phases.append(DPhase(id=p.id, title=p.title, purpose=p.purpose, preconditions=list(p.preconditions), gate=p.gate,
+                                 gate_reason=p.gate_reason, gate_waiver=p.gate_waiver, rollback=p.rollback, steps=steps))
         self._s.set_meta(sid, "plan_summary", plan.summary)
         self._save(sid, Scratch(phases=phases))
 
@@ -639,8 +650,8 @@ class ScratchPad:
                            check_for=smap.get(s.check_for) if s.check_for else None, poll=s.poll, checklist=list(s.checklist), rationale=s.rationale,
                            irreversible=s.declared_irreversible, confirmed=False, origin="auto" if s.auto else "agent") for s in p.steps]
             added += [x.id for x in steps]
-            sc.phases.append(DPhase(id=pid, title=p.title, purpose=p.purpose, preconditions=list(p.preconditions), gate=p.gate and not p.gate_locked,
-                                    gate_reason=p.gate_reason, rollback=p.rollback, steps=steps))
+            sc.phases.append(DPhase(id=pid, title=p.title, purpose=p.purpose, preconditions=list(p.preconditions), gate=p.gate,
+                                    gate_reason=p.gate_reason, gate_waiver=p.gate_waiver, rollback=p.rollback, steps=steps))
         self._save(sid, sc, snapshot=self.get(sid).model_dump_json())
         return added
 

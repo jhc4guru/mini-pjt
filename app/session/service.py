@@ -24,7 +24,6 @@ from app.guards.mapping_store import MappingStore, MappingUnreadable
 from app.guards.masking import Inventory, Masker
 from app.planner.pipeline import PipelineResult, PlanPipeline
 from app.planner.schema import Plan, PlanInvalid
-from app.session.scale import SPLIT_NOTICE, looks_large
 from app.session.apply import ApplyEngine
 from app.session.approval import AUTO, ApprovalEngine, ApprovalError
 from app.executor.adapter import ReadRunnerAdapter
@@ -63,8 +62,10 @@ class SessionService:
     def __init__(self, store: SessionStore, mapping_store: MappingStore, *, executor: Executor, guard: CommandGuard,
                  pipeline_factory: Callable[[Masker, str], PlanPipeline], inventory_factory: Callable[[], Inventory] = Inventory.empty,
                  analyzer_factory: Callable[[Masker], Any] | None = None, audit: AuditLog | None = None, clock: Callable[[], float] = time.time,
-                 sleep: Callable[[float], None] = time.sleep, catalog_retriever: Any = None, editor_factory: Callable[[Masker], Any] | None = None):
+                 sleep: Callable[[float], None] = time.sleep, catalog_retriever: Any = None, editor_factory: Callable[[Masker], Any] | None = None,
+                 tracer: Any = None):
         self._sleep = sleep
+        self._tracer = tracer                              # `app.observability` 트레이서(선택, D-60)
         self.store, self._maps = store, mapping_store
         self._pipeline_factory, self._inventory_factory, self._analyzer_factory = pipeline_factory, inventory_factory, analyzer_factory
         self._maskers: dict[str, Masker] = {}
@@ -194,6 +195,7 @@ class SessionService:
         drafts_mode = self._drafts_mode(sid)                       # 결과를 초안으로만 덧붙일지(빈 plan이거나 연습장에 절차가 있을 때)
         # 어느 세션이든 에이전트는 빠진 값을 되묻지 않고 기본값으로 만든다: 결과는 연습장에서 고칠 수 있다(D-47)
         res = self._pipeline_factory(masker, sid).run(text, iac_managed=bool(sess["iac_managed"]), session_id=sid, drafts=True)
+        self._trace_pipeline(sid, res)
         meta = {"status": res.status, "message": res.message, "questions": list(res.questions), "reasons": list(res.reasons), "detail": list(res.detail),
                 "interpretations": list(res.intake.interpretations) if res.intake else []}
         if res.status != "plan":
@@ -221,11 +223,18 @@ class SessionService:
         self._notify(sid)
         return res
 
+    def _trace_pipeline(self, sid: str, res) -> None:
+        """계획 생성 결과를 트레이스에 남긴다(상태·원인 코드·수정 시도 횟수·계획 해시만. 요청·계획 내용은 없다)."""
+        if self._tracer is None:
+            return
+        pr = res.plan_result
+        h = ""
+        if pr is not None and getattr(pr, "plan", None) is not None:
+            from app.planner.schema import plan_hash
+            h = plan_hash(pr.plan)
+        self._tracer.record("pipeline", res.status, session_id=sid, ok=res.status == "plan", code=",".join(res.reasons)[:80], n=getattr(pr, "repairs", 0) or 0, plan_hash=h)
+
     def start_generation(self, sid: str, text: str) -> None:
-        if looks_large(text) and not self.store.get_meta(sid, "split_notice"):         # 큰 작업이면 세션당 한 번 "나눠서 요청"을 권한다(D-59). 요청은 그대로 진행한다
-            self.store.set_meta(sid, "split_notice", "1")
-            self._thread_add(sid, "assistant", SPLIT_NOTICE, kind="notice")
-            self._notify(sid)
         def work():
             try:
                 self.generate_plan(sid, text)
@@ -842,7 +851,8 @@ class SessionService:
         undo, redo = self.scratch.can_undo_redo(sid)
         out["scratch"] = show({
             "phases": [{**{k: val for k, val in ph.model_dump().items() if k != "steps"},
-                        "gate_locked": any(status[x.id]["irreversible"] and x.confirmed for x in ph.steps) or any(status[x.id]["irreversible"] for x in ph.steps),
+                        "gate": ph.gate or (any(status[x.id]["irreversible"] for x in ph.steps) and not ph.gate_waiver.strip()),      # 보이는 값 = plan이 될 값(D-64)
+                        "gate_locked": any(status[x.id]["irreversible"] for x in ph.steps),
                         "steps": [{**x.model_dump(), **status[x.id], "locked": locks.get(x.id, "")} for x in ph.steps]} for ph in sc.phases],
             "undo": undo, "redo": redo, "dirty": self.scratch.dirty(sid),
             "confirmed": sum(1 for x in sc.steps() if x.confirmed), "total": len(sc.steps())})

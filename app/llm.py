@@ -140,6 +140,7 @@ class LLMClient:
         sleep: Callable[[float], None] = time.sleep,
         prompt_cache: bool = False,
         usage=None,
+        tracer=None,
     ):
         if client is None:
             import boto3
@@ -149,6 +150,7 @@ class LLMClient:
         self._client, self._masker, self._budget, self._audit, self._sleep = client, masker, budget, audit, sleep
         self._prompt_cache = prompt_cache          # 켜져 있어도 모델·리전이 거부하면 꺼진다(`_cache_rejected`)
         self._cache_rejected = False
+        self._tracer = tracer                                              # `app.observability` 트레이서(선택): 메타데이터만 기록한다(D-60)
         self._usage = usage                                              # `app.usage.UsageLog`(선택): 모델별 날짜별 토큰·쓰로틀링 기록(D-53)
 
     def complete(
@@ -173,14 +175,14 @@ class LLMClient:
         # 마스킹이 끝난 텍스트만 나간다. 누출이면 LeakError로 멈춘다(재시도하지 않는다).
         assert_outbound_clean(flatten_text(system, messages, tools), self._masker, f"llm:{role}")
         try:
-            return self._call_with_retry(role, role, messages, system, tools, max_tokens, temperature, cache)
+            return self._call_with_retry(role, role, messages, system, tools, max_tokens, temperature, cache, session_id)
         except _Throttled:
             if role != "MAIN":
                 raise LLMUnavailable(f"{role} 모델이 쓰로틀링 중이라 중단한다") from None
         # MAIN → SUB 폴백(한 방향, 같은 입력, 같은 검사)
         self._log(session_id, True, ("llm_fallback:MAIN->SUB",))
         try:
-            return self._call_with_retry(role, "SUB", messages, system, tools, max_tokens, temperature, cache)
+            return self._call_with_retry(role, "SUB", messages, system, tools, max_tokens, temperature, cache, session_id)
         except _Throttled:
             self._log(session_id, False, ("llm_unavailable:MAIN,SUB",))
             raise LLMUnavailable("MAIN과 SUB 모델이 모두 쓰로틀링 중이라 중단한다") from None
@@ -205,22 +207,29 @@ class LLMClient:
             self._log(None, True, (f"prompt_cache_rejected:{actual}",))
             return runnable.invoke(sent)
 
-    def _call_with_retry(self, requested: str, actual: str, messages, system, tools, max_tokens, temperature, cache: bool = False) -> ChatResult:
+    def _call_with_retry(self, requested: str, actual: str, messages, system, tools, max_tokens, temperature, cache: bool = False, session_id: str | None = None) -> ChatResult:
         model_id = config.model_id(actual)
         runnable = self._model(model_id, tools, max_tokens, temperature)
         sent = ([SystemMessage(content=system)] if system else []) + list(messages)
         for attempt in range(MAX_RETRIES + 1):
+            t0 = time.perf_counter()
             try:
                 ai = self._invoke(runnable, sent, cache, actual)
             except Exception as e:  # noqa: BLE001
                 if _error_code(e) in THROTTLING_CODES:
                     if self._usage is not None and attempt == MAX_RETRIES:
                         self._usage.record_throttle(model_id, actual)       # 재시도를 모두 쓴 쓰로틀링만 센다
+                    if self._tracer is not None and attempt == MAX_RETRIES:
+                        self._tracer.record("llm", "chat", session_id=session_id, role=requested, actual_role=actual, model=model_id, ok=False, code="throttled",
+                                            latency_ms=int((time.perf_counter() - t0) * 1000))
                     if attempt < MAX_RETRIES:
                         self._sleep(BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)])
                         continue
                     raise _Throttled from None
                 # 그 밖의 오류는 폴백 없이 멈춘다. 메시지는 길이를 잘라 올린다(계정 정보가 섞일 수 있다).
+                if self._tracer is not None:
+                    self._tracer.record("llm", "chat", session_id=session_id, role=requested, actual_role=actual, model=model_id, ok=False,
+                                        code=f"{type(e).__name__}:{_error_code(e) or '-'}"[:80], latency_ms=int((time.perf_counter() - t0) * 1000))      # 원인 종류만(메시지는 남기지 않는다)
                 self._log(None, False, (f"llm_error:{actual}:{type(e).__name__}:{_error_code(e) or '-'}"[:120],))      # 원인 종류만 남긴다(메시지는 계정 정보가 섞일 수 있어 남기지 않는다)
                 raise LLMUnavailable(f"{actual} 호출 실패: {type(e).__name__} {_error_code(e)}"[:120]) from None
             usage = ai.usage_metadata or {}
@@ -233,6 +242,9 @@ class LLMClient:
                 self._budget.add_tokens(in_t + out_t)
             if self._usage is not None:
                 self._usage.record_call(model_id, actual, in_t, out_t)
+            if self._tracer is not None:
+                self._tracer.record("llm", "chat", session_id=session_id, role=requested, actual_role=actual, model=model_id, input_tokens=in_t, output_tokens=out_t,
+                                    cache_read=c_read, cache_write=c_write, latency_ms=int((time.perf_counter() - t0) * 1000), ok=True)
             stop = str((ai.response_metadata or {}).get("stopReason", ""))
             return ChatResult(ai, stop, requested, actual, model_id, in_t, out_t, c_read, c_write)
         raise _Throttled  # 도달하지 않는다

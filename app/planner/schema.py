@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -58,6 +59,21 @@ class StepDraft(BaseModel):
     checklist: list[str] = Field(default_factory=list, max_length=12)   # iac·check(수동 체크)용
     rationale: str = Field(default="", max_length=200)
     irreversible: bool = False                       # 되돌릴 수 없는 변경이면 true(iac·manual 등 문서 impact가 없는 step용). 서버는 더 엄격한 쪽으로만 반영한다
+
+
+# 문서 근거가 없는 iac·manual step은 되돌릴 수 없는지를 모델이 표시한다. 표시가 빠지기 쉬운 대표 작업(컨트롤 플레인·클러스터 버전 변경, 클러스터 삭제)은
+# 서버가 알아보고 표시가 없으면 검증 실패로 돌려 고치게 한다(D-64, 더 엄격한 방향이다. 키워드는 좁게 둔다).
+_IRREVERSIBLE_HINT = re.compile(
+    r"kubernetes_version|terraform\s+destroy|클러스터\s*삭제|delete[-_\s]*cluster"
+    r"|(?:컨트롤\s*플레인|control[-_\s]*plane|클러스터\s*버전|cluster[-_\s]*version).{0,24}(?:업그레이드|버전\s*(?:변경|상향|올)|upgrade|version)",
+    re.I)
+
+
+def needs_irreversible_mark(kind: str, title: str, rationale: str, checklist, irreversible: bool) -> bool:
+    """iac·manual step이 되돌릴 수 없는 작업으로 보이는데 `irreversible` 표시가 없으면 True."""
+    if kind not in ("iac", "manual") or irreversible:
+        return False
+    return bool(_IRREVERSIBLE_HINT.search(" ".join([title or "", rationale or "", *(checklist or [])])))
 
 
 class PhaseDraft(BaseModel):
@@ -152,8 +168,9 @@ class Phase(BaseModel):
     preconditions: tuple[str, ...] = ()
     steps: tuple[Step, ...]
     gate: bool = False
-    gate_locked: bool = False                         # True면 게이트를 제거할 수 없다
+    gate_locked: bool = False                         # True면 사유 없이는 게이트를 제거할 수 없다(D-64: 사유를 적어 해제하면 False, gate_waiver에 사유가 남는다)
     gate_reason: str = ""
+    gate_waiver: str = ""                             # 되돌릴 수 없는 step이 있는 phase의 게이트를 사람이 사유와 함께 해제했을 때의 사유(모델은 쓸 수 없다)
     rollback: str = ""
 
 
@@ -170,7 +187,8 @@ class Plan(BaseModel):
 
 # ---------------- 구성과 검증 ----------------
 def build_plan(draft: PlanDraft, guard: CommandGuard, masker: Masker, *, iac_managed: bool = False, postprocess: bool = True,
-               suppressed: frozenset[str] = frozenset(), frozen: frozenset[str] = frozenset()) -> Plan:
+               suppressed: frozenset[str] = frozenset(), frozen: frozenset[str] = frozenset(), gate_waivers: dict[str, str] | None = None) -> Plan:
+    """`gate_waivers`: phase id → 사람이 적은 사유. 되돌릴 수 없는 step이 있는 phase의 게이트는 사유가 있고 게이트를 껐을 때만 해제된다(D-64, 모델 출력으로는 해제되지 않는다)."""
     codes: list[str] = []
     text = " ".join([draft.summary] + [
         " ".join([p.title, p.purpose, p.rollback, p.gate_reason, *p.preconditions] + [
@@ -190,6 +208,8 @@ def build_plan(draft: PlanDraft, guard: CommandGuard, masker: Masker, *, iac_man
         steps: list[Step] = []
         for sd in pd.steps:
             step = _enrich(sd, guard, masker, codes)
+            if needs_irreversible_mark(sd.kind, sd.title, sd.rationale, sd.checklist, sd.irreversible):
+                codes.append(f"irreversible_not_marked:{sd.id}")
             if sd.id in seen:
                 codes.append(f"duplicate_step_id:{sd.id}")
             for dep in (*sd.depends_on, *([sd.check_for] if sd.check_for else [])):
@@ -201,11 +221,14 @@ def build_plan(draft: PlanDraft, guard: CommandGuard, masker: Masker, *, iac_man
             seen[sd.id] = step
             steps.append(step)
         _require_checks(steps, codes)
-        locked = any(s.irreversible for s in steps)
+        irrev = any(s.irreversible for s in steps)
+        waiver = ((gate_waivers or {}).get(pd.id) or "").strip()[:160]
+        waived = irrev and not pd.gate and bool(waiver)
+        locked = irrev and not waived
         phases.append(Phase(
             id=pd.id, title=pd.title, purpose=pd.purpose, preconditions=tuple(pd.preconditions), steps=tuple(steps),
             gate=pd.gate or locked, gate_locked=locked, gate_reason=pd.gate_reason or ("되돌릴 수 없는 step 포함" if locked else ""),
-            rollback=pd.rollback,
+            gate_waiver=waiver if waived else "", rollback=pd.rollback,
         ))
     if codes:
         raise PlanInvalid(codes)
@@ -297,6 +320,7 @@ def plan_hash(plan: Plan) -> str:
         "phases": [
             {"id": p.id, "title": p.title, "purpose": p.purpose, "preconditions": list(p.preconditions), "gate": p.gate,
              "gate_locked": p.gate_locked, "gate_reason": p.gate_reason, "rollback": p.rollback,
+             **({"gate_waiver": p.gate_waiver} if p.gate_waiver else {}),
              "steps": [step_hash(s) for s in p.steps]}
             for p in plan.phases
         ],

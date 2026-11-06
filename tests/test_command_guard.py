@@ -464,3 +464,17 @@ def test_documented_guard_tags_are_all_implemented(chunks):
     """문서가 약속한 보호(guard 태그)는 가드에 구현되어 있어야 한다."""
     used = {t for c in chunks for t in c.guard}
     assert used <= IMPLEMENTED_TAGS, used - IMPLEMENTED_TAGS
+
+
+def test_security_group_can_be_created_with_tags_in_one_documented_command(guard, masker):
+    """생성하면서 태그를 붙이는 방법(--tag-specifications)이 문서 근거로 허용된다(태그 없는 중간 상태가 남지 않는다)."""
+    v = check(guard, masker, "aws ec2 create-security-group --group-name test-sg --description tagged"
+              " --tag-specifications 'ResourceType=security-group,Tags=[{Key=Name,Value=test-sg}]'")
+    assert v.allow and v.executable and v.kind == "mutate" and v.grounded and v.chunk_id == "aws:ec2:create-security-group"
+
+
+def test_create_tags_is_documented_so_it_is_not_an_ai_guess(guard, masker):
+    """이미 만든 리소스에 태그를 붙이는 create-tags는 문서에 있어 폴백(AI 추정)이 아니다."""
+    v = check(guard, masker, f"aws ec2 create-tags --resources {REAL['sg']} --tags Key=Name,Value=test-sg")
+    assert v.allow and v.executable and v.kind == "mutate" and v.grounded and v.chunk_id == "aws:ec2:create-tags"
+

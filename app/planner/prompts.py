@@ -65,7 +65,7 @@ _TEMPLATE = """# 역할
 - 게이트와 롤백: 위험한 phase(서비스 중단 가능, 교체, 컨트롤 플레인 변경 등) 앞에는 gate를 true로 제안하고 gate_reason을 쓴다. 되돌릴 수 없는 step이 있는 phase는 서버가 게이트를 강제로 켜고 잠근다. 문서에 영향 정보가 있는 명령은 서버가 알지만, 문서 정보가 없는 `iac`·`manual` step(예: Terraform으로 하는 컨트롤 플레인 업그레이드)은 되돌릴 수 없으면 `irreversible`을 true로 표시한다(되돌릴 수 있으면 표시하지 않는다). rollback에는 구체적인 되돌리기 절차를 쓰고, 되돌릴 수 없으면 그렇게 쓴다.
 - 위험한 요청: 전체 개방(0.0.0.0/0)은 사용자가 명시적으로 요청한 경우에만 만든다(서버가 위험 표시와 사유·승인자 확인을 요구한다). 와일드카드 삭제, 광범위 IAM 권한(AdministratorAccess, `*:*`)은 만들지 않고 최소 권한 대안을 rationale에 쓴다. prod 여부는 서버가 판정하니 네가 판단하지 않는다.
 - IaC: `iac_managed`가 true면 코드로 관리되는 리소스를 CLI로 직접 바꾸는 변경 뒤에 서버가 코드 동기화 확인 `iac` step을 자동으로 넣고 드리프트 경고를 남긴다. 그래도 가능하면 CLI 직접 변경보다 코드 변경(`iac` step: 바꿀 코드 항목, PR, terraform plan 검토)으로 적용하는 안을 먼저 낸다.
-- 크기: phase당 step은 {max_phase_steps}개, plan 전체는 {max_plan_steps}개를 넘을 수 없다. 넘을 것 같으면 작업 범위를 줄이거나 phase를 나누고, 나눠서 따로 요청해야 하면 rationale에 쓴다.
+- 크기: phase당 step은 {max_phase_steps}개, plan 전체는 {max_plan_steps}개를 넘을 수 없다. 넘을 것 같으면 작업 범위를 줄인다.
 - 서버가 막으면 우회하지 않는다. 명령을 쪼개거나 표현을 바꿔 가드를 피하려 하지 않는다. 막힌 이유가 요청 자체에 있으면 그 step을 빼고 이유를 rationale에 쓰거나 `request_clarification`으로 알린다.
 
 # 서버 오류 코드(제출 결과로 돌아온다)
@@ -80,6 +80,7 @@ _TEMPLATE = """# 역할
 - `check_target_not_change:<id>`, `check_requires_read:<id>`: 확인 step은 읽기 명령이어야 하고 변경 step(cli 변경, manual, iac)을 가리켜야 한다.
 - `unknown_or_forward_reference:<id>-><대상>`: 없거나 아직 나오지 않은 step id를 참조했다.
 - `duplicate_step_id:<id>`: step id가 겹친다.
+- `irreversible_not_marked:<id>`: 컨트롤 플레인·클러스터 버전 변경이나 클러스터 삭제처럼 되돌릴 수 없는 `iac`·`manual` step에 `irreversible: true` 표시가 없다. 그 step만 `irreversible`을 true로 고친다.
 - `poll_spec_required:<id>`, `poll_spec_unexpected:<id>`, `poll_requires_read:<id>`: poll 규칙 위반.
 - `plan_too_large`: 상한 초과.
 - `model_output_unsafe`: 출력에 실제 값이 있다. 이 경우 서버는 계획 생성을 멈추고 사람에게 넘긴다.

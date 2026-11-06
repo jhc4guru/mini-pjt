@@ -74,11 +74,11 @@ class PlanEditor:
         ph.steps.insert(j, step)
         return self._rebuild(plan, phases, self._masker_for(sid))
 
-    def set_gate(self, sid: str, plan: Plan, phase_id: str, gate: bool) -> Plan:
-        """게이트를 켜거나 끈다. 되돌릴 수 없는 step이 있는 phase의 게이트는 끌 수 없다(`build_plan`이 다시 켠다)."""
+    def set_gate(self, sid: str, plan: Plan, phase_id: str, gate: bool, waiver: str = "") -> Plan:
+        """게이트를 켜거나 끈다. 되돌릴 수 없는 step이 있는 phase의 게이트는 사유(`waiver`)가 있어야 끌 수 있다(없으면 `build_plan`이 다시 켠다, D-64)."""
         phases = self._drafts(plan)
         self._phase(phases, phase_id).gate = gate
-        return self._rebuild(plan, phases, self._masker_for(sid))
+        return self._rebuild(plan, phases, self._masker_for(sid), waivers={**{p.id: p.gate_waiver for p in plan.phases if p.gate_waiver}, **({phase_id: waiver} if waiver else {})})
 
     # ---------------- 내부 ----------------
     def _clean(self, sid: str, d: StepDraft) -> StepDraft:
@@ -115,8 +115,9 @@ class PlanEditor:
                                   gate=p.gate, gate_reason=p.gate_reason, rollback=p.rollback))
         return out
 
-    def _rebuild(self, old: Plan, phases: list[PhaseDraft], masker: Masker) -> Plan:
-        new = build_plan(PlanDraft(summary=old.summary, phases=phases), self._guard, masker, iac_managed=old.iac_managed)
+    def _rebuild(self, old: Plan, phases: list[PhaseDraft], masker: Masker, waivers: dict[str, str] | None = None) -> Plan:
+        waivers = {p.id: p.gate_waiver for p in old.phases if p.gate_waiver} if waivers is None else waivers
+        new = build_plan(PlanDraft(summary=old.summary, phases=phases), self._guard, masker, iac_managed=old.iac_managed, gate_waivers=waivers)
         auto_ids = {s.id for s in old.all_steps() if s.auto}
         if not auto_ids & {s.id for s in new.all_steps()}:
             return new

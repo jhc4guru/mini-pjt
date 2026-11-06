@@ -3,8 +3,8 @@
 # 이미지 안에 Python 3.14, AWS CLI v2, kubectl, 앱 패키지를 모두 넣는다. 자격증명(.env)은 이미지에 넣지 않고 실행할 때 --env-file로 준다.
 #
 #   docker build -t devops-agent .
-#   docker run --rm -p 127.0.0.1:8080:8000 --env-file .env -v devops-agent-data:/data devops-agent
-#   → 브라우저에서 http://localhost:8080  (호스트 8080 → 컨테이너 8000. 8000을 다른 프로세스가 쓰고 있어도 충돌하지 않는다)
+#   docker run --rm -p 127.0.0.1:8000:8000 --env-file .env -v devops-agent-data:/data devops-agent
+#   → 브라우저에서 http://localhost:8000  (직접 실행과 같은 8000. 둘을 동시에 띄우면 포트가 겹치므로 하나만 실행한다)
 #
 # 호스트 쪽 포트는 반드시 127.0.0.1로만 연다(앱은 닉네임·토큰 인증뿐이다). 컨테이너 안에서는 0.0.0.0으로 듣는다(ALLOW_NON_LOOPBACK=1).
 FROM python:3.14-slim

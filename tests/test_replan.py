@@ -163,7 +163,7 @@ def test_editing_keeps_the_pairing_and_ordering_rules(r):
     assert next(s for s in new.all_steps() if s.id == "verify").title == "상태 다시 확인"
 
 
-def test_the_gate_of_a_phase_with_an_irreversible_step_cannot_be_removed(r):
+def test_the_gate_of_a_phase_with_an_irreversible_step_is_removed_only_with_a_reason(r):
     e = r
     v = e.ap.submit_plan(e.sid, "alice", e.make_plan())
     plan = e.store.load_plan(e.sid, v)
@@ -172,7 +172,12 @@ def test_the_gate_of_a_phase_with_an_irreversible_step_cannot_be_removed(r):
     assert not e.editor.set_gate(e.sid, withgate, "p1", False).phases[0].gate                               # 보통은 끌 수 있다
     iac = e.editor.add_step(e.sid, plan, "p1", {"id": "tf", "kind": "iac", "title": "코드 삭제", "checklist": ["PR"], "irreversible": True})
     assert iac.phases[0].gate_locked and iac.phases[0].gate
-    assert e.editor.set_gate(e.sid, iac, "p1", False).phases[0].gate                                         # 잠긴 게이트는 끌 수 없다
+    assert e.editor.set_gate(e.sid, iac, "p1", False).phases[0].gate                                         # 사유 없이는 끌 수 없다(D-64)
+    freed = e.editor.set_gate(e.sid, iac, "p1", False, waiver="사람이 직접 진행")
+    assert not freed.phases[0].gate and freed.phases[0].gate_waiver == "사람이 직접 진행"                       # 사유가 있으면 끌 수 있다
+    again = e.editor.update_step(e.sid, freed, "tf", title="코드 삭제(수정)")
+    assert not again.phases[0].gate and again.phases[0].gate_waiver == "사람이 직접 진행"                       # 다른 수정에도 해제와 사유가 유지된다
+    assert e.editor.set_gate(e.sid, freed, "p1", True).phases[0].gate_waiver == ""                           # 다시 켜면 사유가 지워진다
 
 
 def test_editing_a_plan_in_review_makes_a_new_version_and_voids_the_approval(r):

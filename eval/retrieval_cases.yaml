@@ -96,3 +96,6 @@ cases:
   - {id: r83, q: "노드 상세 정보와 이벤트 확인", expect: ["kubectl:kubectl:describe"], tags: [syn]}
   - {id: r84, q: "노드 인스턴스 상태 점검 결과 확인", expect: ["aws:ec2:describe-instance-status"], tags: [syn]}
   - {id: r85, q: "서버 상태 점검 확인해줘", expect: ["aws:ec2:describe-instance-status", "aws:ec2:describe-instances"], tags: [colloquial, multi]}
+  - {id: r86, q: "보안그룹을 만들면서 Name 태그도 같이 달고 싶다", expect: ["aws:ec2:create-security-group"], tags: [colloquial]}
+  - {id: r87, q: "<SG_1>에 Name 태그 붙여줘", expect: ["aws:ec2:create-tags"], tags: [colloquial]}
+  - {id: r88, q: "<SG_1> 태그 확인", expect: ["aws:ec2:describe-tags"], tags: [syn]}

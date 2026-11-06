@@ -27,6 +27,13 @@ from app.rag.glossary import Glossary
 
 SERVICES = ("ec2", "eks", "kubectl", "s3", "iam", "autoscaling", "ssm")
 
+# 지원하지 않는 AWS 서비스 이름(범위 밖 요청의 단서)과 지원 서비스의 단서(D-62). 범위 밖 판정을 서버가 되돌릴지 정할 때만 쓴다.
+_UNSUPPORTED_SERVICE = re.compile(
+    r"(?<![a-z0-9])(?:rds|aurora|lambda|dynamodb|cloudfront|route\s*53|sqs|sns|ecs|ecr|fargate|elasticache|redshift|cloudformation|cloudwatch|kms|athena|glue|kinesis|emr|sagemaker|api\s*gateway|elb|alb|nlb)(?![a-z0-9])", re.I)
+_SUPPORTED_HINT = re.compile(
+    r"(?<![a-z0-9])(?:ec2|eks|s3|iam|ssm|autoscaling|asg|kubectl|k8s|kubernetes|vpc|ami|pod)(?![a-z0-9])|보안\s*그룹|클러스터|버킷|파드|노드", re.I)
+
+
 _SYSTEM = """너는 DevOps 작업 요청을 접수하는 분류기다. 출력은 JSON 하나뿐이다.
 지원 범위: AWS EC2/보안 그룹, EKS(aws eks와 kubectl), S3, IAM, 보조로 autoscaling·ssm 인프라 작업의 조회, 변경, 점검, 업그레이드, 계획 수립 요청은 모두 in_scope=true다. 클러스터 버전 업그레이드, 노드 교체, 권한 정리 같은 큰 작업도 포함한다. 환경이 Terraform 같은 IaC로 관리된다고 하거나 코드 변경이 필요한 작업이어도 in_scope=true다(코드 변경은 사람이 하는 단계로 계획에 들어간다). in_scope=false는 AWS·쿠버네티스 인프라 작업이 아닌 요청(일반 질문, 다른 클라우드, 앱 코드 작성, 데이터 질의 등)뿐이다. 애매하면 in_scope=true로 한다.
 고정 사실: '서버'와 '노드'(워커 노드 포함)는 항상 EC2 인스턴스이고, Pod은 Pod이다. 이 둘은 혼동하지 않으며 모호한 표현으로 취급하지 않는다. '노드'는 같은 인스턴스를 쿠버네티스 Node 객체로 본 것이기도 하므로, 노드의 상태·스케줄링·리소스(Ready, drain, cordon, top)는 kubectl 작업이고 인스턴스 자체(상태 점검, 재부팅, 종료, ASG)는 aws 작업이다. 이때 services에 kubectl과 ec2를 필요에 따라 함께 넣는다.
@@ -106,7 +113,11 @@ class Intake:
         if not model.in_scope:
             # 범위 밖 판정은 모델의 판단이라 틀릴 수 있다(실측: 클러스터 업그레이드 요청을 Terraform 언급 때문에 거절). 서버가 아는 인프라 근거가 있으면
             # (인벤토리 이름·리소스 ID가 마스킹된 플레이스홀더, 용어 사전의 대상·동작 표현) 거절하지 않고 진행한다. 계획 단계가 다시 판단하고 모든 명령은 가드를 거친다.
-            if PLACEHOLDER_RE.search(masked) or self._glossary.expand(masked).matched:
+            # 근거는 인프라 **대상**이어야 한다(D-62): 마스킹된 리소스 플레이스홀더이거나 용어 사전의 대상(entities) 표현. "알려줘"·"보여줘" 같은 일반 동사(actions)만으로는
+            # 되돌리지 않는다(평가 #18: "오늘 서울 날씨 알려줘"가 "알려줘" 때문에 진행됨). 지원하지 않는 서비스 이름(RDS 등)만 있고 지원 서비스 단서가 없으면 "인스턴스" 같은
+            # 일반 명사가 있어도 되돌리지 않는다(평가 #17: "RDS 인스턴스 목록 보여줘"). 둘 다 거절을 더 엄격하게 하는 방향이다.
+            named_unsupported = bool(_UNSUPPORTED_SERVICE.search(masked)) and not _SUPPORTED_HINT.search(masked)
+            if PLACEHOLDER_RE.search(masked) or (self._glossary.expand(masked, sections=("entities",)).matched and not named_unsupported):
                 notes = ("scope_override",)
             else:
                 return self._done(session_id, IntakeResult("reject", ("out_of_scope",), masked, llm_roles=tuple(roles)))

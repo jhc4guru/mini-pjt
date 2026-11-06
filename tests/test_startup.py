@@ -59,7 +59,7 @@ def test_the_image_never_contains_secrets_or_local_state_and_runs_as_a_non_root_
     df = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert not re.search(r"^\s*COPY\s.*\.env", df, re.M) and "ENV AWS_" not in df and "ARG AWS_" not in df          # 자격증명을 굽지 않는다
     assert re.search(r"^USER app", df, re.M) and "ALLOW_NON_LOOPBACK=1" in df and "sha256sum -c" in df                # 비root, 명시 허용, kubectl 체크섬
-    assert "127.0.0.1:8080:8000" in df                                                                               # 실행 안내가 호스트 쪽을 루프백으로만 연다
+    assert "127.0.0.1:8000:8000" in df                                                                               # 실행 안내가 호스트 쪽을 루프백으로만 연다
     assert "requirements-runtime.txt" in df
     assert "groff-base" in df and "assert not missing" in df                                                         # aws help 렌더러(groff)와 스냅샷 완전성 확인(없으면 빌드 실패)
 

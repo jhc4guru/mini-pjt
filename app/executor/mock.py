@@ -77,6 +77,9 @@ class MockExecutor(Executor):
         sg = ec2.create_security_group(GroupName="mock-sg", Description="mock", VpcId=vpc)["GroupId"]
         trust = json.dumps({"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": {"Service": "eks.amazonaws.com"}, "Action": "sts:AssumeRole"}]})
         role_arn = iam.create_role(RoleName="mock-eks-role", AssumeRolePolicyDocument=trust)["Role"]["Arn"]
+        # 평가·시연 입력이 쓰는 IAM 대상(합성 이름): 없으면 에이전트가 존재하지 않는 대상을 되묻는다(평가 #10·#13)
+        iam.create_role(RoleName="deploy-role", AssumeRolePolicyDocument=trust)
+        iam.create_user(UserName="alice-admin")
         eks.create_cluster(name=cluster, version=version, roleArn=role_arn, resourcesVpcConfig={"subnetIds": [subnet], "securityGroupIds": [sg]})
         ami = ec2.describe_images()["Images"][0]["ImageId"]
         ec2.create_launch_template(LaunchTemplateName=launch_template, LaunchTemplateData={"ImageId": ami, "InstanceType": "t3.micro"})

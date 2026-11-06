@@ -153,6 +153,12 @@ def rendered(tmp_path, chunks, snapshot):
     cases.append(snap(box6, s6, "rejected_bob", "bob"))
     box6.store.close()
     box6.maps.close()
+    for name, state in (("closed_completed", "completed"), ("closed_aborted", "aborted")):                    # 종료된 작업의 결과 요약(T8)
+        cv = snap(box, sid, name, "alice", ctab="apply")
+        cv["view"]["session"]["state"] = state
+        for step_id, st in (("reboot", "done"), ("verify", "failed"), ("man", "skipped"), ("man-chk", "pending")):
+            cv["view"]["steps"].setdefault(step_id, {})["state"] = st
+        cases.append(cv)
     f = tmp_path / "cases.json"
     f.write_text(json.dumps(cases, ensure_ascii=False), encoding="utf-8")
     expr = 'JSON.stringify({a: dedupeHistory(%s, null, null), b: dedupeHistory(%s, "s1", "bob"), c: dedupeHistory(%s, "s2", "alice")})' % ('[{sid:"s1", nick:"alice", requester:"alice", updated_at:5}, {sid:"s1", nick:"bob", requester:"alice", updated_at:5}, {sid:"s2", nick:"bob", requester:"carol", updated_at:9}, {sid:"s2", nick:"alice", requester:"carol", updated_at:9}, {sid:"s3", nick:"x", requester:"x", updated_at:7}]', ('[{sid:"s1", nick:"alice", requester:"alice", updated_at:5}, {sid:"s1", nick:"bob", requester:"alice", updated_at:5}, {sid:"s2", nick:"bob", requester:"carol", updated_at:9}, {sid:"s2", nick:"alice", requester:"carol", updated_at:9}, {sid:"s3", nick:"x", requester:"x", updated_at:7}]'), ('[{sid:"s1", nick:"alice", requester:"alice", updated_at:5}, {sid:"s1", nick:"bob", requester:"alice", updated_at:5}, {sid:"s2", nick:"bob", requester:"carol", updated_at:9}, {sid:"s2", nick:"alice", requester:"carol", updated_at:9}, {sid:"s3", nick:"x", requester:"x", updated_at:7}]'))
@@ -503,3 +509,19 @@ def test_the_reviewer_can_reject_with_comments_and_the_requester_sees_them_on_th
     assert "반려됨(수정 후 다시 검토 요청)" in a and "반려 " in a and "반려됨 · 수정 중" in a                                      # plan 카드 상태와 시각
     assert [b for b in rendered["rejected_alice"]["buttons"] if b["text"].startswith("검토 요청 (")]   # 고친 뒤 다시 검토를 요청할 수 있다
     assert "확정 (일괄 승인)" not in [b["text"] for b in rendered["rejected_bob"]["buttons"]] and "반려(수정 요청)" not in [b["text"] for b in rendered["rejected_bob"]["buttons"]]
+
+
+# ---------------- 종료된 작업의 결과 요약(T8) ----------------
+def test_a_closed_task_shows_a_result_summary_and_explains_the_placeholders(rendered):
+    for name, title in (("closed_completed", "작업 결과 요약 · 완료"), ("closed_aborted", "작업 결과 요약 · 중단됨")):
+        c = rendered[name]["center"]
+        assert title in c and "절차 4개: 완료 1 · 건너뜀 1 · 실패 1 · 실행 안 함 1" in c
+        assert "✖ 확인 — 실패" in c and "↷ 직접 실행 — 건너뜀" in c                                  # 끝까지 못 간 절차가 이름과 함께 나열된다
+        assert "○ 확인 — 실행 안 함" in c
+        assert "삭제되어" in c and "자리 표시" in c                                               # 실제 값이 지워져 플레이스홀더로 보이는 이유
+        assert c.index("작업자") < c.index("작업 결과 요약") < c.index("삭제되어")                           # 제목·작업자 아래에 요약이 온다
+
+
+def test_an_open_task_has_no_result_summary(rendered):
+    for name in ("review_alice", "applying_pending_alice", "failed_paused", "manual_confirm_bob"):
+        assert "작업 결과 요약" not in rendered[name]["center"]

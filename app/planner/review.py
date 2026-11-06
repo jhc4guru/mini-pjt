@@ -47,6 +47,7 @@ phase_notes의 phase는 입력에 있는 phase id만 쓴다. 설명이나 인사
 
 _CHECK_MESSAGES = {
     "irreversible": "되돌릴 수 없는 step이 있다",
+    "gate_waived": "되돌릴 수 없는 step이 있는 단계의 게이트를 사람이 사유를 적고 해제했다",
     "disruption_likely": "서비스 중단 가능성이 높다",
     "disruption_possible": "서비스 중단 가능성이 있다",
     "replaces": "리소스 교체(삭제 후 재생성)가 있다",
@@ -125,6 +126,8 @@ def _phase_items(p: Phase) -> list[CheckItem]:
     mutate = [s for s in p.steps if s.op == "mutate"]
     if irreversible := [s.id for s in p.steps if s.irreversible]:
         items.append(CheckItem("irreversible", "warn", p.id, tuple(irreversible)))
+        if p.gate_waiver:
+            items.append(CheckItem("gate_waived", "warn", p.id, tuple(irreversible), p.gate_waiver))
     for code, key in (("disruption_likely", "likely"), ("disruption_possible", "possible")):
         if ids := [s.id for s in p.steps if s.impact.get("disruption") == key]:
             items.append(CheckItem(code, "warn", p.id, tuple(ids)))
@@ -160,7 +163,7 @@ def build_review(plan: Plan) -> ReviewFacts:
         items.append(CheckItem("aws_eks_heavy", "info", None, tuple(eks[:6]), f"{len(eks)}/{len(steps)}"))
     codes = {i.code for i in items if i.status == "warn"}
     warnings = tuple(w for w in plan.warnings if w.split(":", 1)[0] not in INFO_WARNINGS)       # IaC 동기화 안내(D-47)는 위험이 아니라 알림이다: 등급·주의 건수에 넣지 않고 iac_step(info)로 보인다
-    if codes & {"irreversible", "risk_flag", "fallback_step"}:
+    if codes & {"irreversible", "risk_flag", "fallback_step", "gate_waived"}:
         level = "high"
     elif codes or warnings:
         level = "medium"

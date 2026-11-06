@@ -210,3 +210,14 @@ def test_many_aws_eks_steps_get_an_info_note_without_changing_the_risk_level(env
     assert not [i for i in few.checklist if i.code == "aws_eks_heavy"]                   # 적게 쓰면 안내하지 않는다
     kube = build_review(plan_of(env, [S("k1", "kubectl get nodes"), S("k2", "kubectl version")]))
     assert not [i for i in kube.checklist if i.code == "aws_eks_heavy"]
+
+
+def test_a_released_gate_on_an_irreversible_phase_is_high_risk_and_shows_the_reason(env):
+    """D-64: 사람이 사유를 적고 게이트를 해제한 되돌릴 수 없는 단계는 승인 화면에 경고(gate_waived)로 사유와 함께 나온다."""
+    ph = env[1].mask(INSTANCE)
+    base = plan_of(env, [S("kill", f"aws ec2 terminate-instances --instance-ids {ph}"), S("v", f"aws ec2 describe-instances --instance-ids {ph}", check_for="kill")])
+    waived = base.model_copy(update={"phases": tuple(p.model_copy(update={"gate": False, "gate_locked": False, "gate_waiver": "점검 창에서 직접 진행"}) for p in base.phases)})
+    facts = build_review(waived)
+    waiver_items = [i for i in facts.checklist if i.code == "gate_waived"]
+    assert facts.risk_level == "high" and waiver_items and waiver_items[0].detail == "점검 창에서 직접 진행"
+

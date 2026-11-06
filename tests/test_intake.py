@@ -159,3 +159,28 @@ def test_a_model_scope_rejection_is_overridden_when_the_server_sees_infrastructu
 def test_scope_rejection_stands_without_any_infrastructure_evidence():
     intake, _, _ = make([model_reply(in_scope=False, services=[])])
     assert intake.process("회사 근처 맛집 추천해줘").decision == "reject"
+
+
+# ---- 범위 밖 판정의 서버 예외는 일반 동사가 아니라 인프라 대상 근거가 있을 때만 작동한다(D-62, 평가 #17·#18에서 발견) ----
+@pytest.mark.parametrize("text", [
+    "오늘 서울 날씨 알려줘",                  # 용어 사전의 동작 표현("알려줘")만 있고 인프라 대상이 없다
+    "주식 시세 알려줘",
+    "이 문서 목록 보여줘",
+])
+def test_generic_action_words_alone_do_not_override_a_scope_rejection(text):
+    intake, _, _ = make([model_reply(in_scope=False, services=[])])
+    r = intake.process(text)
+    assert r.decision == "reject" and r.reasons == ("out_of_scope",)
+
+
+@pytest.mark.parametrize("text", ["RDS 인스턴스 목록 보여줘", "Lambda 함수 목록 알려줘", "DynamoDB 테이블 조회해줘", "CloudFront 배포 보여줘"])
+def test_a_request_naming_only_an_unsupported_service_stays_rejected_even_with_generic_nouns(text):
+    intake, _, _ = make([model_reply(in_scope=False, services=[])])
+    r = intake.process(text)
+    assert r.decision == "reject" and r.reasons == ("out_of_scope",)
+
+
+def test_an_unsupported_service_name_does_not_block_the_override_when_a_supported_service_is_also_named():
+    intake, _, _ = make([model_reply(in_scope=False, services=[])])
+    r = intake.process("RDS 말고 EC2 인스턴스 목록 보여줘")
+    assert r.decision == "proceed" and r.reasons == ("scope_override",)

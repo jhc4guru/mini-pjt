@@ -21,6 +21,7 @@ from app.guards.command_guard import CommandGuard, CommandIndex
 from app.guards.mapping_store import SqliteMappingStore
 from app.guards.masking import Inventory, Masker
 from app.llm import LLMClient
+from app.observability import make_tracer
 from app.usage import UsageLog
 from app.planner.agent import PlanningAgent
 from app.planner.failure import FailureAnalyzer
@@ -42,9 +43,12 @@ class Running:
     executor: MockExecutor
     audit: AuditLog
     usage: UsageLog | None = None
+    tracer: object | None = None
 
     def close(self) -> None:
         self.executor.close()
+        if self.tracer is not None:
+            self.tracer.close()
         if self.usage is not None:
             self.usage.close()
         self.store.close()
@@ -66,29 +70,30 @@ def build_service(*, data_dir: Path | None = None, retriever=None, usage_path: P
     store = SessionStore(data / "sessions.sqlite")
     maps = SqliteMappingStore(data / "mapping.sqlite")
     retriever = retriever or build_retriever()
+    tracer = make_tracer(data / "trace.sqlite")                                    # 마스킹된 메타데이터만 남기는 로컬 트레이스(D-60, TRACE_BACKEND)
     usage = UsageLog(usage_path or data / "usage.sqlite")                       # 모델별 날짜별 토큰·쓰로틀링 기록(D-53)
 
     def toolbox(masker: Masker, sid: str, budget: AgentBudget) -> ReadToolbox:
         return ReadToolbox(masker=masker, guard=guard, retriever=retriever, runner=ReadRunnerAdapter(executor, guard, masker, session_id=sid),
-                           budget=budget, audit=audit, session_id=sid)
+                           budget=budget, audit=audit, session_id=sid, tracer=tracer)
 
     def pipeline_factory(masker: Masker, sid: str) -> PlanPipeline:
         budget = AgentBudget()
-        llm = LLMClient(masker, budget=budget, usage=usage, prompt_cache=True)      # 도구 루프(계획·실패 분석)만 프롬프트 캐싱을 쓴다(D-54)
+        llm = LLMClient(masker, budget=budget, usage=usage, tracer=tracer, prompt_cache=True)      # 도구 루프(계획·실패 분석)만 프롬프트 캐싱을 쓴다(D-54)
         return PlanPipeline(Intake(llm, masker, audit=audit), PlanningAgent(llm, toolbox(masker, sid, budget), guard, masker, budget, audit=audit),
                             Reviewer(llm, masker, audit=audit), by_id)
 
     def analyzer_factory(masker: Masker) -> FailureAnalyzer:
         budget = AgentBudget()
-        llm = LLMClient(masker, budget=budget, usage=usage, prompt_cache=True)      # 도구 루프(계획·실패 분석)만 프롬프트 캐싱을 쓴다(D-54)
+        llm = LLMClient(masker, budget=budget, usage=usage, tracer=tracer, prompt_cache=True)      # 도구 루프(계획·실패 분석)만 프롬프트 캐싱을 쓴다(D-54)
         return FailureAnalyzer(llm, toolbox(masker, "", budget), guard, masker, budget, audit=audit)
 
     def editor_factory(masker: Masker) -> ScratchEditor:
-        return ScratchEditor(LLMClient(masker, budget=AgentBudget(), usage=usage), masker, audit=audit)
+        return ScratchEditor(LLMClient(masker, budget=AgentBudget(), usage=usage, tracer=tracer), masker, audit=audit)
 
     from app.rag.retriever import HybridRetriever
     service = SessionService(store, maps, executor=executor, guard=guard, pipeline_factory=pipeline_factory,
                              inventory_factory=Inventory.from_env, analyzer_factory=analyzer_factory, audit=audit,
                              catalog_retriever=HybridRetriever(chunks, vector_index=None),         # 명령 만들기 도우미: 모델을 쓰지 않는 BM25 검색
-                             editor_factory=editor_factory)
-    return Running(service, store, maps, executor, audit, usage)
+                             editor_factory=editor_factory, tracer=tracer)
+    return Running(service, store, maps, executor, audit, usage, tracer)

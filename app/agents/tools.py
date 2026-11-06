@@ -49,15 +49,29 @@ class ReadToolbox:
     def __init__(
         self, *, masker: Masker, guard: CommandGuard, retriever: HybridRetriever, runner: ReadCommandRunner,
         budget: AgentBudget, audit: AuditLog | None = None, session_id: str | None = None,
-        search_kwargs: dict | None = None,
+        search_kwargs: dict | None = None, tracer=None,
     ):
         self._masker, self._guard, self._retriever, self._runner = masker, guard, retriever, runner
+        self._tracer = tracer                       # `app.observability` 트레이서(선택): 도구 이름·성공 여부·오류 코드만 기록한다(D-60)
         self._budget, self._audit, self._session = budget, audit, session_id
         self._search_kwargs = search_kwargs or {}
         self._handlers = {"search_docs": self._search_docs, "lookup_inventory": self._lookup_inventory, "run_read_command": self._run_read_command}
         assert set(self._handlers) == READ_ONLY_TOOLS
 
     def call(self, name: str, args: dict[str, Any] | None = None) -> dict:
+        try:
+            out = self._call(name, args)
+        except Exception as e:  # noqa: BLE001  상한 초과·허용되지 않은 도구: 코드만 남기고 그대로 올린다
+            self._trace(name, False, str(getattr(e, "code", type(e).__name__)))
+            raise
+        self._trace(name, bool(out.get("ok")), str(out.get("error", "")))
+        return out
+
+    def _trace(self, name: str, ok: bool, code: str) -> None:
+        if self._tracer is not None:
+            self._tracer.record("tool", name if name in READ_ONLY_TOOLS else "unknown_tool", session_id=self._session, ok=ok, code=code[:80])
+
+    def _call(self, name: str, args: dict[str, Any] | None = None) -> dict:
         args = args or {}
         if name not in READ_ONLY_TOOLS:
             raise ToolNotAllowed(f"허용되지 않은 도구: {name}")

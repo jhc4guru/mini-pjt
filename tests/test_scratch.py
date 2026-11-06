@@ -500,3 +500,35 @@ def test_a_request_session_switches_to_drafts_mode_once_the_pad_has_steps(tmp_pa
     box.svc.generate_plan(sid, REQUEST)
     assert box.pipeline.drafts is True and box.svc.view(sid, "alice")["pipeline"]["status"] == "manual"   # 연습장에 절차가 있으면 결과는 초안으로만 덧붙는다
     box.store.close(); box.maps.close()
+
+
+def test_irreversible_phase_gate_needs_a_reason_and_what_is_shown_is_what_is_sent(empty):
+    """되돌릴 수 없는 step이 있는 단계의 게이트(D-64): 연습장에서도 켜진 상태로 보이고, 사유 없이는 끌 수 없으며, 사유를 적어 끄면 그대로 plan이 된다."""
+    box, sid = empty
+    assert S(box, sid, "alice", op="add_steps", steps=[
+        {"id": "kill", "kind": "cli", "title": "인스턴스 종료", "command": f"aws ec2 terminate-instances --instance-ids {INSTANCE}"},
+        {"id": "kill-chk", "kind": "cli", "title": "종료 확인", "command": f"aws ec2 describe-instances --instance-ids {INSTANCE}", "check_for": "kill"}])["ok"]
+    ph = sc(box, sid)["phases"][0]
+    assert ph["gate"] and ph["gate_locked"]                                                          # 보이는 값이 켜짐(plan이 될 값)
+    refused = S(box, sid, "alice", op="update_phase", phase=ph["id"], fields={"gate": False})
+    assert refused["code"] == "gate_waiver_required" and sc(box, sid)["phases"][0]["gate"]
+    ok = S(box, sid, "alice", op="update_phase", phase=ph["id"], fields={"gate": False, "gate_waiver": "점검 시간대에 사람이 직접 진행"})
+    assert ok["ok"]
+    ph = sc(box, sid)["phases"][0]
+    assert not ph["gate"] and ph["gate_waiver"] == "점검 시간대에 사람이 직접 진행"
+    assert S(box, sid, "alice", op="set_confirmed", step_ids=["kill"], value=True)["ok"]
+    assert box.svc.handle(sid, "alice", {"type": "send_to_apply"})["ok"]
+    sent = box.svc.view(sid, "alice")["plan"]["phases"][0]
+    assert sent["gate"] is False and sent["gate_locked"] is False and sent["gate_waiver"] == "점검 시간대에 사람이 직접 진행"   # 연습장에서 본 그대로
+
+
+def test_turning_the_gate_back_on_clears_the_waiver(empty):
+    box, sid = empty
+    S(box, sid, "alice", op="add_steps", steps=[
+        {"id": "kill", "kind": "cli", "title": "인스턴스 종료", "command": f"aws ec2 terminate-instances --instance-ids {INSTANCE}"},
+        {"id": "kill-chk", "kind": "cli", "title": "종료 확인", "command": f"aws ec2 describe-instances --instance-ids {INSTANCE}", "check_for": "kill"}])
+    pid = sc(box, sid)["phases"][0]["id"]
+    S(box, sid, "alice", op="update_phase", phase=pid, fields={"gate": False, "gate_waiver": "사유"})
+    S(box, sid, "alice", op="update_phase", phase=pid, fields={"gate": True})
+    ph = sc(box, sid)["phases"][0]
+    assert ph["gate"] and ph["gate_waiver"] == ""

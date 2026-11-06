@@ -3,13 +3,13 @@
 구현 단계와 진행사항 추적 문서. 작업을 시작/완료할 때마다 상태와 변경 이력을 갱신한다.
 상태: `[ ]` 대기 · `[~]` 진행중 · `[x]` 완료 · `[!]` 막힘
 
-최종 갱신: 2026-11-05 · 현재 단계: **T4·T5·T6·T8 완료(화면은 3분할+Plan/Apply 탭, 이력 한 줄·상태 점, 절차 줄 아이콘, 터미널 실행 로그). T7 저장은 이력 상세 보기(종료된 작업의 결과 전체)가 남음. 다음: T7-1 트레이싱, T9 평가, T10 시연**
+최종 갱신: 2026-11-06 · 현재 단계: **T0~T10 완료(제출 정리 D-66). 남은 것(미완·미측정): Langfuse 연동(보류), Judge 일치율 측정, 평가 #9(EKS 업그레이드) 통과 불안정, 종료된 작업의 상세 보기·`show_file_contents`(보류), `.venv-eval`·RAGAS**
 
 ## T0. 인터뷰·문서
 - [x] 요구사항 인터뷰 (목표, 승인 정책, 가드레일, 범위/Phase)
 - [x] `CLAUDE.md` 작성
 - [x] `SERVICE.md` 작성
-- [x] `SPEC.md` 작성 (수용 기준은 이후 50개까지 확장)
+- [x] `SPEC.md` 작성 (수용 기준은 이후 93개까지 확장)
 
 ## T1. 기반
 - [x] `requirements.txt`에 moto[server], fastapi, uvicorn[standard] 추가 및 `.venv` 설치 (moto 5.2.5, fastapi 0.162.0, langgraph 1.2.19, langchain-aws 1.9.1 확인)
@@ -61,8 +61,8 @@
 - [x] (T4) 계획 에이전트가 입력→마스킹→검색→LLM→명령 가드를 통합 사용(`PlanPipeline`), 범위 밖 요청 거절(의미 판단 + 서버 근거 보정), 모델 자유 텍스트 출력의 누출 스캔 (D-38)
 - [~] (T5) 실행기가 `assert_server_executable`을 반드시 거치는 구조(관문 우회 테스트)와 전체 타임아웃은 완료. 실행 직전 작업 폴더 경로 재검증은 실행하는 쪽 가드 재검사로 일부 충족, 검사 후 파일이 바뀌는 경합은 남음
 - [x] (T6) 승인 엔진이 `verdict.requires` 처리(계약은 `docs/IMPLEMENTATION.md` 1절): `open_cidr_confirm`(사유 입력 + 승인자 확인), `strong_warning`, `dry_run_first`(계획에서 dry-run step이 앞서는지), `prod_warning`, `fallback_approval`, `show_file_contents`. 가드 판정을 `AuditLog`에 연결
-- [ ] (T7-1) 트레이스 export 전 `assert_outbound_clean` 연결
-- [ ] (T8) 승인 화면에 정책 JSON·매니페스트 내용(`local_paths`) 표시. 엔진은 `show_file_contents`를 다른 사람의 확인으로 요구한다
+- [x] (T7-1) 트레이스 export 전 누출 방어: 외부 export가 없는 로컬 트레이스는 `find_sensitive`·`find_secrets`와 안전 문자 집합으로 저장 전에 막는다(D-60). `assert_outbound_clean`(마스커 필요)은 Langfuse export를 구현할 때 연결
+- [ ] (T8, 보류) 정책 JSON·매니페스트 내용(`local_paths`) 표시: 엔진은 `show_file_contents`를 다른 사람의 확인으로 요구한다. 보류 사유와 선행 결정은 T8 절의 같은 항목에서 추적한다(중복 표기)
 
 ## T4. 계획 생성
 - [x] 질의 정규화·범위 판단·모호 표현 해소 `app/planner/intake.py` (READ 모델 구조화 출력, 서버 검증, 누출 검사), 테스트 16개 (D-30)
@@ -89,13 +89,13 @@
 - [x] 읽기/변경 분류 규칙(허용 목록, 애매하면 변경): T3 `CommandGuard`에 구현·테스트됨
 
 ## T6. 세션·승인
-완료(2026-11-05, D-39): 코드는 `app/session/`(`states`, `store`, `approval`, `apply`, `edit`, `replan`, `service`)와 `app/web/`(`server`, `factory`, `main`), 테스트는 `tests/test_{session_store,approval,apply,apply_flows,replan,service,web}.py`. 화면(T8)은 아직 없어 WebSocket API와 테스트로 확인한다. 남은 것은 아래 "T6 남은 것".
+완료(2026-11-05, D-39): 코드는 `app/session/`(`states`, `store`, `approval`, `apply`, `edit`, `replan`, `service`)와 `app/web/`(`server`, `factory`, `main`), 테스트는 `tests/test_{session_store,approval,apply,apply_flows,replan,service,web}.py`. 화면(T8)은 이후 구현됐다(T8 절). 남은 것은 아래 "T6 남은 것".
 - [x] 링크 초대(초대 토큰), 닉네임, 멤버 토큰 인증, WebSocket 동기화(세션의 모든 연결이 같은 스냅샷을 받음)
 - [x] plan 일괄 승인 + 해시 잠금(요청자 승인 불가, 해시 재계산, 새 버전이면 이전 승인 무효)
 - [x] apply step별 4-eyes 승인(순서·의존·게이트·`requires` 조치, 실행 직전 승인 자격 재계산)
 - [x] 확인 실패 처리 (재시도/건너뛰기/중단: 서버 규칙으로 재시도 가능 오류·횟수 상한·상태 확인, 건너뛰기는 다른 사람·의존 없음일 때만, 실패 분석 연결)
 - [x] apply 중 수정 차단 (plan 복귀 후 재승인: 일시정지 후 새 버전 제출은 부분 재계획 단위에서)
-- [~] 커스텀 step: 직접 CLI·체크·수정·삭제·이동·게이트 설정 완료(`PlanEditor`). **자연어로 만드는 step은 남음**(계획 에이전트를 부분 호출하는 방식, 결정 필요)
+- [x] 커스텀 step: 직접 CLI·체크·수정·삭제·이동·게이트 설정 완료(`PlanEditor`). 자연어로 만드는 step은 D-47(초안 요청·말로 수정)로 대체됨
 - [x] 수동 실행(manual) step(엔진): 서버 미실행, apply에서 멈춤 → 요청자 "실행 완료" 보고(결과 붙여넣기 선택, 가드·마스킹 적용) → 다른 사람 확인 → 진행. 이력에는 보고자·시각 기록. 명령 복사 버튼은 T8
 - [x] phase 게이트 승인 (요청자가 아닌 사람 확인, 앞 phase 완료 후, `irreversible` phase 게이트 제거 불가)
 - [x] 부분 재계획: apply 일시정지, 완료 step 잠금, 남은 step만 새 plan 버전으로 수정·재승인·재개 (완료 step 해시 승계)
@@ -104,48 +104,49 @@
 - [x] `iac` step: 코드 변경 체크리스트 전체 표시 후 완료 보고, (선택) `terraform plan` 출력 붙여넣기 → 입력 가드·마스킹(저장). 붙여넣은 출력의 리뷰어 요약은 남음
 
 ## T6 남은 것
-- 자연어 커스텀 step, poll 완료의 서버 판정 여부, 세션별 작업 폴더 분리(결정 필요 항목은 `docs/DECISIONS.md` "아직 정해지지 않은 것")
+- poll 완료의 서버 판정 여부(자연어 커스텀 step은 D-47로 대체됨), 세션별 작업 폴더 분리(결정 필요 항목은 `docs/DECISIONS.md` "아직 정해지지 않은 것")
 - T5 잔여(검사 후 파일이 바뀌는 경합): 실행 직전 해시 재계산과 실행기 가드 재검사로 일부 막음. 세션별 작업 폴더를 분리하면 함께 줄어든다
 
 ## T7. 저장
-- [x] SQLite 스키마 (세션, 참여자, plan 버전, 근거·리뷰, 승인, 실행/확인 결과, 이벤트). Phase 2 대비 필드와 이력 조회 화면은 남음
+- [x] SQLite 스키마 (세션, 참여자, plan 버전, 근거·리뷰, 승인, 실행/확인 결과, 이벤트). Phase 2 대비 필드는 남음(이력 조회 화면은 T8에서 구현)
 - [x] plan 버전, phase, step 상태 저장 (일시정지·재개, 서버 재시작 후 이어서 진행)
 - [x] 매핑 암호화 저장소 `mapping_store.py`(AES-GCM, 세션 AAD, 키 파일 분리, TTL, `Masker.export_state/load_state`), 테스트 5개 (D-29)
 - [x] 세션·apply 흐름에 연결: 동작마다 매핑 저장, 재시작 후 세션 열 때 복원(읽을 수 없으면 중단), 종료·취소 시 삭제, `purge_expired` 1시간마다 호출
 
 ## T7-1. 관측 (Trace)
 - [x] 의존성: `langfuse` 설치 확인(런타임 `.venv`, 충돌·다운그레이드 없음), `requirements.txt` 반영
-- [ ] 트레이스 모듈 `app/observability/`: 백엔드 추상화(`off`/`local`/`langfuse`, 기본 local), 마스킹 이후 LLM 호출 래퍼·마스킹된 도구 결과에만 부착
-- [ ] 로컬 트레이스: SQLite 이력과 연결(trace id ↔ plan id). `ref/local_tracer.py`, `hook_trace.py` 패턴
-- [ ] Langfuse 연동(개발 단계): `.env`에 `LANGFUSE_*` 키(로그 출력 금지, 실행기 비전달), self-hosted 권장·cloud는 개발 한정, 명시적 활성화
-- [ ] export 전 누출 스캔 + 누출 시 export 차단·로컬 기록·경고 (fail-closed)
-- [ ] 트레이스 누출 테스트 (원본 입력·실제 값·매핑·실행 결과 원문이 백엔드로 가지 않음)
-- [ ] 개발용 지표 요약 (호출·토큰, 폴백 비율, 가드 차단 비율, 재시도)
+- [x] 트레이스 모듈 `app/observability/`(2026-11-05, 최소 범위: `off`/`local`, `langfuse`는 시작 거부): 백엔드 추상화(`off`/`local`/`langfuse`, 기본 local), 마스킹 이후 LLM 호출 래퍼·마스킹된 도구 결과에만 부착
+- [x] 로컬 트레이스: SQLite 이력과 연결(trace id ↔ plan id). `ref/local_tracer.py`, `hook_trace.py` 패턴
+- [ ] (보류, 사용자 지시 2026-11-05) Langfuse 연동(개발 단계): `.env`에 `LANGFUSE_*` 키(로그 출력 금지, 실행기 비전달), self-hosted 권장·cloud는 개발 한정, 명시적 활성화
+- [x] (로컬 트레이스 범위) export 전 누출 스캔 + 누출 시 export 차단·로컬 기록·경고 (fail-closed)
+- [x] 트레이스 누출 테스트 (원본 입력·실제 값·매핑·실행 결과 원문이 백엔드로 가지 않음)
+- [x] 개발용 지표 요약(`eval/trace_summary.py`) (호출·토큰, 폴백 비율, 가드 차단 비율, 재시도)
 
 ## T8. UI
 - [x] 단일 HTML 페이지 `app/static/index.html` (D-41): 요청·초대 참여, plan 검토(리뷰 위험 등급·체크리스트·AI 요약 표시, 근거 패널, 경고·위험 표시, 수정·삭제·이동·게이트·step 추가), 승인 버튼(역할에 맞게 비활성), apply 진행(요구 조치·사유 입력·실행·폴링·manual 보고·확인), 실패 후 재시도·건너뛰기·중단과 AI 분석 표시, 이력. 가짜 DOM(node) 렌더링 테스트와 정적 검사, 실제 Chrome 조작 확인(수동)으로 확인
 - [x] 좌측 이력·새 작업, 대화형 화면, 하단 입력창, 같은 세션에서 추가 정보 이어 받기(D-42). 실제 Chrome에서 새 작업 → 되묻기 → 답하기 → plan → 다른 탭 참여·승인 → apply 시작, 모바일 폭까지 확인(`tests/browser/`, 2026-11-05)
 - [x] 화면을 세로 3분할로 재구성(D-43): 좌측 이력(DB)·새 작업·작업자·초대 링크 재발급, 중앙 절차 목록(승인·선택 수정·추가·드래그앤드롭), 우측 대화, 작업 제목 필수 저장, 활동 로그는 접어 둠. 실제 Chrome에서 확인
 - [x] Plan 탭을 연습장으로(D-47): 초안·확정·Apply로 보내기, 빈 plan 시작, 직접 입력·명령 만들기(조회로 값 고르기), 단계 간 드래그·복제·삭제, 되돌리기, 말로 수정 요청(수정안 수락), 보낸 입력 즉시 표시. 실제 Chrome에서 확인(2026-11-05)
-- [ ] 남은 화면: 종료된 작업의 결과 상세 보기(매핑이 지워져 플레이스홀더로 보임), 정책 JSON·매니페스트 파일 내용 표시(`local_paths`는 plan에 저장되지 않아 서버 변경이 먼저 필요), 자연어 커스텀 step 입력, 모바일 세부 조정
+- [x] 종료된 작업의 결과 요약(2026-11-05): 완료·중단된 작업 상단에 절차별 결과 집계와 끝까지 못 간 절차 목록, "실제 값은 종료 때 삭제되어 자리 표시로 보인다" 안내(`closedSummary`, 서버 변경 없음, 렌더 테스트 추가)
+- [ ] (결정 필요, 보류) 정책 JSON·매니페스트 파일 내용 표시(`show_file_contents`): `local_paths`가 plan에 저장되지 않고, Phase 1에서 파일이 어디서 오는지(누가 작업 폴더에 두는지)와 승인 시점의 파일 내용을 해시로 고정해 승인 뒤 파일이 바뀌면 실행을 거부할지가 정해져야 한다(내용만 보여 주면 승인과 실행 사이에 파일이 바뀔 수 있어 안전하지 않다). 자연어 커스텀 step 입력은 D-47(초안 요청·말로 수정)으로 대체됨, 모바일 세부 조정은 남음
 
 ## T9. 평가
-- [ ] 질문 30~50개 + 기대 명령 (다양한 표현)
-- [x] 에이전트 평가셋 `eval/agent_cases.csv` 42건(positive 16, negative 8, edge 12, guardrail 6; 41·42번은 D-30 모호 표현 해소 케이스)과 로더 `eval/agent_cases.py`, 형식·데이터 규칙 검증 `tests/test_eval_cases.py`. 실행·채점은 남음
+- [x] 질문 30~50개 + 기대 명령: 에이전트 평가셋 42건(`eval/agent_cases.csv`)으로 충족(2026-11-06 확인)
+- [x] 에이전트 평가셋 `eval/agent_cases.csv` 42건(positive 16, negative 8, edge 12, guardrail 6; 41·42번은 D-30 모호 표현 해소 케이스)과 로더 `eval/agent_cases.py`, 형식·데이터 규칙 검증 `tests/test_eval_cases.py`. 실행·채점은 아래 항목과 `eval/reports/`에서 완료
 - [~] 다단계 목표 질문 10~15개 + 기대 step (에이전트 계획 평가): 일부는 위 평가셋(8, 9, 15, 30번)에 포함, 기대 step 상세 채점 기준은 별도
-- [ ] EKS 1.35→1.36 업그레이드 시나리오 (self-managed ASG, Terraform 환경): 기대 phase 0~5, 게이트 위치, 되돌릴 수 없는 step 표시, 사전 점검 자동 삽입 확인
+- [x] EKS 1.35→1.36 업그레이드 시나리오 (self-managed ASG, Terraform 환경): 기대 phase 0~5, 게이트 위치, 되돌릴 수 없는 step 표시, 사전 점검 자동 삽입 확인 — 실제 모델로 여러 번 측정함(평가 #9 포함, 2026-11-05~06). 통과는 안정적이지 않음(2회 중 1회 한도 중단), SERVICE.md 13절
 - [ ] 평가 전용 환경 `.venv-eval` 생성(`requirements-eval.txt`: ragas) + Bedrock 호환 확인
 - [~] 검색 평가: hit@k·MRR은 구현 완료(`eval/eval_retrieval.py`, 80 케이스). RAGAS(context precision·recall, faithfulness)는 남음
 - [~] LLM-as-Judge(`eval/judge.py` 구현·가짜 모델 테스트 완료, 실제 모델 실행 전): 고정 루브릭, JSON 스키마, temperature 0, 생성과 다른 모델(MAIN 출력은 SUB로 채점), 계획 타당성·근거 일치·폴백 판정
 - [ ] Judge 신뢰도: 수동 라벨 샘플 5~10개와 일치율 측정
-- [~] 평가 리포트 `eval/reports/`(`run_agent_eval.py`가 jsonl·md 생성, 이전 실행 비교 구현, 실제 실행 전) (규칙 기반 + 검색 + judge 통합, 이전 실행과 비교), 평가 데이터는 플레이스홀더만 사용. 측정이 끝나면 README의 "RAGAS 평가 결과"·"인-아웃 세트 통과율"·구조도 상태를 함께 갱신
-- [~] 자동 채점 스크립트(`agent_scoring.py` 구현, 42건 기계 기대 `agent_expect.py`; 폴백 비율은 미집계, 실제 실행 전)
-- [~] 정확도 목표 수치 확정 (제안 90%, 이 값으로 진행하되 첫 측정 뒤 확인, D-53)
+- [x] 평가 리포트 `eval/reports/`(`run_agent_eval.py`가 jsonl·md 생성, 이전 실행 비교 구현) (규칙 기반 + 검색 + judge 통합, 이전 실행과 비교), 평가 데이터는 플레이스홀더만 사용. 측정이 끝나면 README의 "RAGAS 평가 결과"·"인-아웃 세트 통과율"·구조도 상태를 함께 갱신 — 2026-11-05~06 실행·리포트 생성 완료(`agent_20261105_all`, `agent_20261106_fix`, `agent_20261106_d64*`)
+- [x] 자동 채점 스크립트(`agent_scoring.py` 구현, 42건 기계 기대 `agent_expect.py`; 폴백 비율은 미집계) — 측정 완료(정확도 90.0%, guardrail 100%). 폴백 비율은 미집계
+- [x] 정확도 목표 수치 확정 (제안 90%, 이 값으로 진행하되 첫 측정 뒤 확인, D-53) — D-61로 확정: 규칙 채점 90% 이상, guardrail 100%(첫 측정 90.0%)
 
 ## T10. 마무리
-- [ ] 로컬 end-to-end 시연 (탭 2개, 다른 닉네임)
-- [ ] `SPEC.md` 수용 기준 전체 점검
-- [ ] `CLAUDE.md`, `SERVICE.md` 최종 동기화
+- [x] 로컬 end-to-end 시연 (탭 2개, 다른 닉네임) — 2026-11-05 탭 2개 시연 통과
+- [x] `SPEC.md` 수용 기준 전체 점검 — 2026-11-06 SPEC.md "수용 기준 점검" 절 추가(미충족: 34 Judge 일치율, 부분: 11·31)
+- [x] `CLAUDE.md`, `SERVICE.md` 최종 동기화 — 2026-11-06 (관측·게이트 규칙·아키텍처 반영)
 
 ## 로드맵 (이번 범위 아님)
 - Phase 2: 이력 기반 계획 재사용, 엑셀 계획서 import, 서비스별 전문 에이전트 + supervisor (서비스 약 8개 이상 또는 서비스별 정확도 저하 시), `langgraph-supervisor` 도입(에이전트 계층은 Phase 1에서 LangGraph로 전환 완료, D-55)
@@ -194,3 +195,18 @@
 - 2026-11-05: ③ 되돌린 뒤 EKS 재측정 1회(사용자 선택): `stopped(repair_exhausted)`, 추론 17회·도구 호출 23회·토큰 300,534. 거부 코드를 기록하지 못해 원인(②와의 관련 여부 포함) 미확인. 다음: 진단 래퍼에 `repair_log`를 추가해 원인 확인
 - 2026-11-05: 대용량 작업은 나눠서 plan을 요청하라는 안내를 README에 추가(D-59, 사용자 결정): EKS 업그레이드는 control plane 변경 전(사전)/후(사후). 안내만이고 코드·가드는 그대로, 나눴을 때의 효과는 미측정(사용자가 측정 없이 진행). 남은 후보: 사전 → 사후 세션 이어가기 기능(Phase 2, 승인 필요)
 - 2026-11-05: 큰 요청 경고와 중단 안내 구현(D-59, 사용자 선택 "3번" + 쓰로틀링·사용량 이슈는 오류 메시지로 나눠서 요청하도록): `app/session/scale.py`(`looks_large`, 낱말 규칙)와 `start_generation`의 세션당 1회 안내(`kind="notice"`), `pipeline._STOP_MESSAGES`의 한도·쓰로틀링 계열에 "나눠서(사전/사후) 요청" 문구. `tests/test_scale.py`(판정·세션당 1회·모델로 안 가는지·메시지) 추가, 관련 106개 통과. 규모의 토큰 예측은 하지 않음
+- 2026-11-05: 남은 작업 진행(사용자 지시): ① 전체 테스트 839 통과·7 건너뜀·실패 0. ② `repair_exhausted` 진단 재실행 1회: `plan`·수정 0회·264,210 토큰(재현 안 됨, D-57 이후 4회 중 1회 발생으로 기록, ②는 유지). ③ 나눈 요청 실측: 사전만 349,518·사후만 347,428 토큰, 합계가 한 번에 요청(26~30만)의 약 2.5배 → D-59의 "나누면 토큰이 준다"는 근거는 입증되지 않아 안내·중단 메시지 문구를 정정(나눠도 사용량은 줄지 않는다고 함께 안내)
+- 2026-11-05: T7-1 관측 최소 범위 구현(D-60): `app/observability/`(`LocalTracer`·`NullTracer`·`make_tracer`), `LLMClient`·`ReadToolbox`·`SessionService.generate_plan`·`build_service` 연결, `eval/trace_summary.py`. 메타데이터만 저장(본문 없음), 문자열은 안전 문자 집합 + 민감값·시크릿 스캔으로 fail-closed. Langfuse는 구현하지 않음(보류). `tests/test_observability.py` 추가(관련 89개 통과). 계획보다 좁게 구현했고(마스킹된 본문도 저장하지 않음) D-60에 이유 기록
+- 2026-11-05: T8 화면 중 종료된 작업의 결과 요약 구현(`closedSummary`): 렌더 테스트 2개 추가(완료·중단 케이스, 진행 중 작업에는 없음), `test_ui_render.py`·`test_ui.py` 53개 통과. 정책 JSON·매니페스트 파일 내용 표시(`show_file_contents`)는 파일 출처와 승인 시점 내용 해시 고정이 먼저 정해져야 해서 구현하지 않고 결정 필요 항목으로 남김
+- 2026-11-05: 에이전트 평가 중간 결과(D-61, 실행 `20261105_all`, 케이스 26건 = guardrail 6 + negative 8 + edge 12, 규칙 채점): 통과 23·실패 2·오류 1 = 92.0%, guardrail 100%. 실패 원인 분석: #18("오늘 서울 날씨 알려줘", 기대 reject→clarify)·#17("RDS 인스턴스 목록 보여줘", 오류 `repair_exhausted` 10.7만 토큰)은 접수의 범위 예외가 일반 동사·일반 명사로 작동한 **에이전트 결함** → D-62로 수정(회귀 테스트 7건 먼저), #29("node-a1 노드를 비워줘")는 mock 환경에 없는 노드 이름을 쓴 **평가 입력 오류**라 에이전트가 되묻는 것이 맞아 입력을 `worker-a1`로 정정(D-61에 이유 기록)
+- 2026-11-06: T9 평가 최종 정리(D-61): 첫 측정 90.0%(36/4/2, guardrail 100%). #10·#13은 mock 환경에 없는 `deploy-role`·`alice-admin`을 써서 에이전트가 되묻은 평가 환경 오류라 mock seed에 두 대상을 추가(기대값 불변), #29는 순서 규칙이 dry-run drain을 센 정규식 오류라 정정 후 저장된 계획을 재채점해 통과. 정정 후 재실행(`20261106_fix`)에서 #10·#13·#17·#18 통과, #9는 `update-cluster-version` 없이 Terraform iac 절차로만 컨트롤 플레인을 두고 irreversible 표시도 없어 실패(기대값 유지, 개선 과제). 합산 41/42 = 97.6%(재측정이 아닌 케이스별 합산임을 README에 명시). 전체 테스트 864 통과·7 건너뜀. Judge·일치도 미측정
+- 2026-11-06: "나눠서 요청" 안내 삭제(D-63, 사용자 지시): README 절, 큰 요청 알림(`scale.py`·`service.py`), 중단 메시지 문구 제거. `test_scale.py` 삭제, `test_stop_messages.py` 추가, SPEC 89 폐기 표시
+- 2026-11-06: 계획 프롬프트의 "나눠서 따로 요청" 지침 삭제, 사전→사후 이어가기 기능은 추진하지 않기로 함(D-63, 사용자 지시 "다 빼줘")
+- 2026-11-06: 보안 그룹 생성+태그 요청이 표현에 따라 다르게 나오는 문제(사용자 제보): 원인은 문서에 `create-tags`가 없고 `create-security-group`에 태그 예시·키워드가 없어 "생성해서 Name 태그에 붙여줘"는 모델 지식의 `create-tags` 별도 호출(초안 4개, 문서 근거 없는 AI 추정 가능성)로, "생성하면서 태그도 함께"는 `--tag-specifications` 한 명령(초안 2개)으로 갈렸던 것. 조치: `create-security-group`에 태그 예시·키워드·주의 추가, 새 문서 `knowledge/cli/aws/ec2/tags.md`(`create-tags`·`describe-tags`, impact 포함), 검색 평가 케이스 r86~r88, 가드 테스트 2개. 문서 21개·명령 143개, `check_docs` 오류 0. 검색(BM25) hit@3 0.918→0.932(r86~r88 모두 적중). 같은 두 문장을 실제 모델로 다시 돌린 결과 둘 다 `--tag-specifications` 한 명령 + 확인 읽기 2절차로 일치(각 1회 측정). 에이전트 평가셋(42건)은 측정 결과와 문서 수치가 얽혀 있어 늘리지 않음
+- 2026-11-06: 게이트·되돌릴 수 없음 규칙 변경(D-64, 사용자 지시 "제거할 수 없다는 규칙은 바꿔도 된다", "둘 다 진행"): 사유를 적고 게이트 해제(`gate_waiver`, 해시·승인 화면·위험 높음), 연습장 표시=plan 값, `irreversible_not_marked` 서버 검증과 프롬프트 코드 설명, UI(사유 입력·해제 배지), 테스트 추가. 전체 테스트와 #9 재측정 결과는 아래에 기록
+- 2026-11-06: D-64 구현 완료·검증: 전체 테스트 870 통과·7 건너뜀. #9 재측정 2회(`20261106_d64`: tool_calls_exceeded 오류 45만 토큰, `20261106_d64b`: 통과 26만 토큰, 컨트롤 플레인 변경 iac 절차가 irreversible_not_marked 검증 통과). 통과가 안정적이지 않음(도구 호출 한도 문제 잔존)
+- 2026-11-06: 큰 계획의 도구 호출·토큰 문제 개선 구조 후보 검토를 기록(D-65, 구현 안 함, 사용자 요청): 단계 분할+구조화 사실 전달(사용자 안), 사실 저장소+조사 전담, 플레이북 골격, 서버의 결정적 사전 조사 묶음 등 10개 후보의 효과(대부분 미측정)·위험·조건과 측정 순서
+- 2026-11-06: 다음에 이어서 할 일(사용자가 오늘은 여기서 중단): ① 중단(aborted)은 종료 상태라 오클릭을 되돌릴 수 없음 → "중단 취소"(중단한 사람만, 시간 제한, 절차 상태 복구)나 중단 버튼 구분 개선 검토(상태 전이 규칙 변경이라 DECISIONS·테스트 필요, 미결정). ② 계획 생성이 한도로 중단되면 이어서 하기 없음("다시 시도"는 처음부터) → 체크포인트/완성 phase 보존 검토(D-65와 함께, `langgraph-checkpoint-sqlite` 제약은 D-55의 Claude 제안이라 재검토 가능). ③ 마무리: SPEC 수용 기준 점검 메모(#3, #11, #34 judge 일치도 미측정, #31 Langfuse 미구현, #36 EKS 실측), CLAUDE.md·SERVICE.md 최종 동기화, 제출 정리 요약. ④ 게이트 해제 UI(사유 입력, 배지)는 브라우저에서 직접 확인하지 못함. ⑤ 평가 Judge 채점·일치도 미측정
+- 2026-11-06: 마무리(D-66): Docker 호스트 포트 8000 통일, `data/` 초기화(inventory.yaml은 프로젝트 밖 백업), 빈 상태에서 전체 테스트·서버 시작·Docker 재검증, SERVICE.md에 현재 아키텍처(12절)·문제점(13절)·대안 아키텍처(14절)와 맨 위 한계 요약 추가, README 구조도·상태·평가 절 재작성, SPEC 수용 기준 점검 절 추가, 문서 간 오래된 서술 정리
+- 2026-11-06: 제출 전 문서 동기화(사용자 요청): `TASK.md` 맨 위 현재 단계 요약을 실제 상태(T0~T10 완료, 남은 것 목록)로 고침, `README.md` 회고의 manual 개수(9개 → 이후 `update-kubeconfig` 추가로 현재 10개)를 시점과 함께 정정, `SERVICE.md`의 "현재 한계와 개선 과제"를 문서 맨 위에서 2절 앞으로 옮기고 14-3에 대안 B·C·D의 mermaid 다이어그램 추가(규칙·코드 변경 없음)
+- 2026-11-06: 문서 점검 반영(사용자 요청, 전체 테스트는 실행하지 않음): 자리표시 `TESTS_COUNT`·`TESTS_DATE`(README·SPEC·DECISIONS)를 D-66 기록값(870 통과·7 건너뜀)으로 채움, `SERVICE.md`의 `IMPLEMENTATION.md` 절 참조 2곳 정정, `SPEC.md` 수용 기준 순서 정렬(중복 71번 → 93번, 기존 번호는 그대로), `TASK.md`의 옛 서술(수용 기준 수·T8 화면·평가 실행 전·자연어 step·중복 항목) 정정, 검색 평가셋이 80건 → 88건으로 늘고 BM25 계열만 재측정했음을 README·IMPLEMENTATION에 표시. 정책·코드 변경 없음
