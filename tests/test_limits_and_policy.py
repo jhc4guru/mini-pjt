@@ -229,3 +229,53 @@ def test_agent_limit_defaults_are_pinned():
     """기본 한도를 바꾸려면 사용자 승인과 D-26 갱신이 필요하다. 값이 조용히 바뀌지 않게 고정한다."""
     lim = Limits()
     assert (lim.max_tool_calls, lim.max_steps, lim.max_tokens, lim.max_seconds, lim.max_repeats) == (30, 40, 700_000, 600.0, 2)
+
+
+# ---------------- 단계별 도구 호출 예산(D-69) ----------------
+def test_stage_budget_counts_each_stage_separately_under_a_total_cap():
+    b = AgentBudget(Limits(investigation_calls=2, phase_calls=1, max_total_tool_calls=3, max_repeats=99))
+    b.begin_stage(b.limits.investigation_calls)
+    b.before_tool("search_docs", {"q": 1}); b.before_tool("search_docs", {"q": 2})
+    assert b.remaining_tool_calls() == 0
+    with pytest.raises(BudgetExceeded) as e:
+        b.before_tool("search_docs", {"q": 3})                       # 조사 단계 예산 소진
+    assert e.value.code == "tool_calls_exceeded" and e.value.detail == "stage"
+    b2 = AgentBudget(Limits(investigation_calls=2, phase_calls=2, max_total_tool_calls=3, max_repeats=99))
+    b2.begin_stage(2)
+    b2.before_tool("search_docs", {"q": 1}); b2.before_tool("search_docs", {"q": 2})
+    b2.begin_stage(2)                                                # 새 단계는 단계 예산을 새로 받는다
+    assert b2.remaining_tool_calls() == 1                            # 하지만 요청 전체 합계(3)가 먼저 남은 양을 줄인다
+    b2.before_tool("search_docs", {"q": 3})
+    with pytest.raises(BudgetExceeded):
+        b2.before_tool("search_docs", {"q": 4})                      # 합계 상한은 단계 예산이 남아 있어도 넘을 수 없다
+
+
+def test_without_stages_the_single_shared_limit_still_applies():
+    b = AgentBudget(Limits(max_tool_calls=2, max_total_tool_calls=99, investigation_calls=99, max_repeats=99))
+    b.before_tool("search_docs", {"q": 1}); b.before_tool("search_docs", {"q": 2})
+    with pytest.raises(BudgetExceeded):
+        b.before_tool("search_docs", {"q": 3})                       # 단계를 시작하지 않으면(loop 방식) 기존 한도 그대로
+
+
+def test_stage_limits_default_values_and_token_time_step_limits_stay_global():
+    lim = Limits()
+    assert (lim.investigation_calls, lim.phase_calls, lim.max_total_tool_calls) == (30, 10, 80)
+    b = AgentBudget(Limits(max_tokens=100, max_steps=2))
+    b.begin_stage(50)
+    with pytest.raises(BudgetExceeded):
+        b.add_tokens(101)                                            # 토큰은 단계가 달라져도 요청 전체에 적용된다
+    b2 = AgentBudget(Limits(max_steps=2))
+    b2.begin_stage(5); b2.before_step(); b2.begin_stage(5); b2.before_step()
+    with pytest.raises(BudgetExceeded):
+        b2.before_step()                                             # 추론 단계 수도 단계가 바뀌어도 이어서 센다
+
+
+def test_planner_mode_setting(monkeypatch):
+    from app import config
+    monkeypatch.delenv("PLANNER_MODE", raising=False)
+    assert config.planner_mode() == "batch"                                  # 기본은 batch(D-73)
+    monkeypatch.setenv("PLANNER_MODE", "Loop")
+    assert config.planner_mode() == "loop"
+    monkeypatch.setenv("PLANNER_MODE", "turbo")
+    with pytest.raises(RuntimeError):
+        config.planner_mode()                                        # 모르는 값은 조용히 넘어가지 않는다

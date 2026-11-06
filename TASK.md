@@ -3,7 +3,7 @@
 구현 단계와 진행사항 추적 문서. 작업을 시작/완료할 때마다 상태와 변경 이력을 갱신한다.
 상태: `[ ]` 대기 · `[~]` 진행중 · `[x]` 완료 · `[!]` 막힘
 
-최종 갱신: 2026-11-06 · 현재 단계: **T0~T10 완료(제출 정리 D-66). 남은 것(미완·미측정): Langfuse 연동(보류), Judge 일치율 측정, 평가 #9(EKS 업그레이드) 통과 불안정, 종료된 작업의 상세 보기·`show_file_contents`(보류), `.venv-eval`·RAGAS**
+최종 갱신: 2026-11-06 · 현재 단계: **Phase 1 종료(D-67) 뒤 구조 개선 진행 중(T11)**: 체크포인트(D-68)·일괄 조사 batch(D-69, 기본값 D-73)·phase 사전 검색(D-71)·시나리오 묶음(D-72, EKS 업그레이드) 완료. 남은 것: T11 후속(위 항목), CLI 확장(문서 뼈대 자동 생성·검색 범위 축소), 사실 저장소·주제별 조사 분리, Phase 1 이월(Langfuse·Judge 일치율·`.venv-eval`/RAGAS·`show_file_contents`)
 
 ## T0. 인터뷰·문서
 - [x] 요구사항 인터뷰 (목표, 승인 정책, 가드레일, 범위/Phase)
@@ -148,6 +148,20 @@
 - [x] `SPEC.md` 수용 기준 전체 점검 — 2026-11-06 SPEC.md "수용 기준 점검" 절 추가(미충족: 34 Judge 일치율, 부분: 11·31)
 - [x] `CLAUDE.md`, `SERVICE.md` 최종 동기화 — 2026-11-06 (관측·게이트 규칙·아키텍처 반영)
 
+## T11. 대용량 안정성·확장 (Phase 1 종료 후)
+- [x] 계획 생성 체크포인트·이어하기(D-68, 2026-11-06): `app/planner/checkpoint.py`, 에이전트·파이프라인·서비스 연결, 단위 테스트(가짜 모델). 실제 모델 측정은 미실시
+- [x] 일괄 조사(`batch`) + 단계별 도구 호출 예산(D-69, 2026-11-06): `PLANNER_MODE=batch`, 기본 `loop` 유지. 단위 테스트 통과. EKS 시나리오 방식마다 2회 측정(batch 토큰 약 40%↓·모델 호출 17→11~13회, 도구 호출은 29~30회로 오히려 많음, 전부 plan 완료). 품질(게이트 위치 등) 채점 전이라 기본값은 loop 유지
+- [x] batch 단계별 시스템 프롬프트(D-70, 2026-11-06): 구현했으나 측정에서 토큰 약 50% 증가(phase 단계 모델 호출 2배)라 기본 끔
+- [x] batch phase별 문서 사전 검색(D-71, 2026-11-06): EKS 3회 측정 토큰 약 10%↓(평균 163k), phase 단계 `search_docs` 5~8→3~5회. 효과는 기대보다 작음. 품질 채점은 다음
+- [x] batch 평가셋 채점(2026-11-06 `20261106_batchfull`): 통과 39·실패 0·오류 3(#30·#31·#32 edge), guardrail 6/6, 총 토큰 약 180만(loop 약 224만). 오류 3건은 loop에서도 나타나는 변동·기존 약점(재실행 확인). **기본값을 batch로 전환(D-73)**. ※ 이전 시도는 정정: **정정 — 2026-11-06에 한 이 채점은 팩토리 연결 오류로 loop로 돌았다(D-71 정정 참고). batch 평가셋 채점은 아직 하지 않았다**
+- [x] 시나리오 묶음 `knowledge/scenarios/`(D-72, 2026-11-06): 규격·로더·매칭·에이전트 연결·필수 항목 검사·검증 테스트, 첫 시나리오 `eks-upgrade`(사용자 검토 반영: AMI·애드온 버전은 사람이 지정, kubectl 우선, 애드온 Terraform·수동, 노드 교체는 새 ASG→cordon→drain→기존 ASG 축소)
+- [x] EKS 시나리오 측정(batch, 3회): 토큰 145~148k·모델 호출 9회·게이트 구조 동일(시나리오 없는 batch 181k·loop 309k 대비). 평가셋 채점은 아직
+- [x] 시나리오 `tag-update`(EC2 계열 태그 수정)는 초안으로 `docs/scenarios-draft/`에만 기록(미적용, 사용자 지시). 적용 전 검토 항목은 D-72 참고
+- [ ] EKS 시나리오 평가 케이스(`eval/agent_cases.csv`·`agent_expect.py`: 게이트 위치, iac 되돌릴 수 없음 표시, cordon·drain·기존 ASG 축소) 추가와 계획 내용의 사람 검토
+- [ ] batch 기본 전환(D-73) 뒤 후속: ① #31 와일드카드 ARN이 누출 검사에 걸리는 문제(가드 규칙 변경, 사용자 승인 필요) ② #30 문제 해결 질문에 계획을 시도하다 실패 ③ 세션 종단 확인(`eval/run_eks_session.py`)을 batch 기본으로 재실행 ④ 한동안 뒤 `loop` 코드 제거(별도 결정) ⑤ 노드 교체 phase의 IaC 동기화 step 중복(서버 자동 삽입 + 모델 작성)
+- [ ] 사실 저장소 구조화, 주제별 조사 분리
+- [ ] CLI 확장: 문서 뼈대 자동 생성(`cli_snapshot` 활용), 서비스별 검색 범위 축소, 서비스 추가 시 서비스별 hit@k 평가
+
 ## 로드맵 (이번 범위 아님)
 - Phase 2: 이력 기반 계획 재사용, 엑셀 계획서 import, 서비스별 전문 에이전트 + supervisor (서비스 약 8개 이상 또는 서비스별 정확도 저하 시), `langgraph-supervisor` 도입(에이전트 계층은 Phase 1에서 LangGraph로 전환 완료, D-55)
 - Phase 3: 테라큐브·GitHub PR, Terraform plan/apply 연동(`iac` step 자동화), AWS role 분리, 실제 인증(SSO)
@@ -210,3 +224,15 @@
 - 2026-11-06: 마무리(D-66): Docker 호스트 포트 8000 통일, `data/` 초기화(inventory.yaml은 프로젝트 밖 백업), 빈 상태에서 전체 테스트·서버 시작·Docker 재검증, SERVICE.md에 현재 아키텍처(12절)·문제점(13절)·대안 아키텍처(14절)와 맨 위 한계 요약 추가, README 구조도·상태·평가 절 재작성, SPEC 수용 기준 점검 절 추가, 문서 간 오래된 서술 정리
 - 2026-11-06: 제출 전 문서 동기화(사용자 요청): `TASK.md` 맨 위 현재 단계 요약을 실제 상태(T0~T10 완료, 남은 것 목록)로 고침, `README.md` 회고의 manual 개수(9개 → 이후 `update-kubeconfig` 추가로 현재 10개)를 시점과 함께 정정, `SERVICE.md`의 "현재 한계와 개선 과제"를 문서 맨 위에서 2절 앞으로 옮기고 14-3에 대안 B·C·D의 mermaid 다이어그램 추가(규칙·코드 변경 없음)
 - 2026-11-06: 문서 점검 반영(사용자 요청, 전체 테스트는 실행하지 않음): 자리표시 `TESTS_COUNT`·`TESTS_DATE`(README·SPEC·DECISIONS)를 D-66 기록값(870 통과·7 건너뜀)으로 채움, `SERVICE.md`의 `IMPLEMENTATION.md` 절 참조 2곳 정정, `SPEC.md` 수용 기준 순서 정렬(중복 71번 → 93번, 기존 번호는 그대로), `TASK.md`의 옛 서술(수용 기준 수·T8 화면·평가 실행 전·자연어 step·중복 항목) 정정, 검색 평가셋이 80건 → 88건으로 늘고 BM25 계열만 재측정했음을 README·IMPLEMENTATION에 표시. 정책·코드 변경 없음
+- 2026-11-06: Phase 1 종료(D-67, 사용자 지시). 미완 항목(Langfuse, Judge 일치율, `.venv-eval`·RAGAS, `show_file_contents`, #9 안정화, 세션별 작업 폴더)은 이월. 코드 변경 없음
+- 2026-11-06: 계획 생성 체크포인트·이어하기 구현(D-68, 사용자 승인). 신규 `app/planner/checkpoint.py`, 수정 `agent.py`·`pipeline.py`·`service.py`, 테스트 추가(`test_planning_agent.py` 8, `test_service.py` 1, `test_stop_messages.py` 1). 가드·한도 불변
+- 2026-11-06: 일괄 조사·단계별 도구 호출 예산 구현(D-69, 사용자 승인). `agent_limits`(단계 예산), `toolloop`(단계별 도구 집합·부분 압축), `prompts`(batch 프롬프트), `agent`(조사 라운드), `config.planner_mode`, 테스트 추가(`test_planning_agent.py` 9, `test_limits_and_policy.py` 4). 기본값은 loop, 측정 전
+- 2026-11-06: 일괄 조사 방식 비교 측정(EKS, 방식마다 2회, 사용자 요청). `eval/run_eks_scenario.py`에 `--mode`와 숫자 기록(`eval/reports/planner_mode_20261106.jsonl`) 추가. 결과는 D-69 참고
+- 2026-11-06: batch 단계별 시스템 프롬프트 구현(D-70, 사용자 승인). `prompts.py`(`batch_investigation`·`batch_phase`), `toolloop.stage(system=)`, `agent.py`, 테스트 2개 추가
+- 2026-11-06: 방식 비교 재측정(EKS 교대 14회, 단계별 호출 계측 추가). batch(단계별 프롬프트 끔)는 토큰 152~199k(5회, 전부 성공)로 loop 276~349k(4회) 대비 약 40% 적고 모델 호출 12~13회(loop 17~21), 조사 단계는 3회 호출에 도구 호출 25회, phase 단계가 모델 호출의 대부분(9~10회, 그중 보충 `search_docs` 5~8회). D-70은 오히려 나빠 번복
+- 2026-11-06: batch phase별 문서 사전 검색 구현·측정(D-71, 사용자 승인). batch 총 토큰 평균 약 163k(loop 약 309k 대비 약 45%↓), 모델 호출 10~13회. 아직 `PLANNER_MODE` 기본은 loop, 품질 채점 전
+- 2026-11-06: (정정됨) 위 항목의 평가셋 채점은 loop 결과였다. 아래 팩토리 오류 수정 항목 참고
+- 2026-11-06: 팩토리가 `PLANNER_MODE`를 에이전트에 넘기지 않던 오류 발견·수정(앱 경로 평가는 항상 loop였음: D-71의 평가셋 채점 문단 정정). 시나리오 묶음 구현(D-72), phase 사전 검색의 반복 호출 상한 문제 수정
+- 2026-11-06: EKS 시나리오 측정(토큰 146k·145k·148k, 모델 호출 9회), 시나리오 흐름의 phase 단계 되묻기, 두 번째 시나리오 `tag-update` 초안(사용자 정정: TAG 배포 = 리소스 태그 수정). scale-in protection은 사용자 지시로 무시
+- 2026-11-06: `tag-update` 시나리오를 `knowledge/scenarios/`에서 `docs/scenarios-draft/`로 옮겨 기록만 남김(사용자 지시). 앱은 `eks-upgrade`만 읽는다
+- 2026-11-06: batch 평가셋 채점 통과 → `PLANNER_MODE` 기본값을 batch로 전환(D-73, 사용자 승인한 순서). loop는 선택 옵션으로 유지. 남은 문제: #31 와일드카드 ARN 누출 검사(가드 규칙 변경이라 승인 필요), #30 문제 해결 질문의 계획 시도

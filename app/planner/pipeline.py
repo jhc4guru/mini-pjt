@@ -55,6 +55,16 @@ def stop_message(code: str, detail: tuple[str, ...] = ()) -> str:
     return msg + (f" (반복된 도구: {detail[0]})" if code == "repeated_call" and detail else "")
 
 
+def _saved_note(cp) -> str:
+    """중단됐지만 이어서 할 수 있을 때의 안내(D-68). 값은 없다."""
+    if cp is None or not cp.has_progress:
+        return ""
+    done, total = cp.progress
+    if total:
+        return f" 여기까지 만든 {done}/{total} phase는 저장했습니다. 같은 내용으로 다시 시도하면 이어서 진행합니다."
+    return " 조사한 결과는 저장했습니다. 같은 내용으로 다시 시도하면 이어서 진행합니다."
+
+
 @dataclass(frozen=True)
 class PipelineResult:
     status: str                                       # reject | clarify | plan | stopped
@@ -73,6 +83,8 @@ class _PipelineState(TypedDict, total=False):
     iac_managed: bool
     session_id: Optional[str]
     drafts: bool
+    resume: object
+    on_checkpoint: object
     intake: IntakeResult
     plan_result: PlanResult
     result: PipelineResult
@@ -83,8 +95,10 @@ class PlanPipeline:
         self._intake, self._agent, self._reviewer, self._chunks = intake, agent, reviewer, chunks
         self._graph = self._build_graph()
 
-    def run(self, text: str, *, iac_managed: bool = False, session_id: str | None = None, drafts: bool = False) -> PipelineResult:
-        state = self._graph.invoke({"text": text, "iac_managed": iac_managed, "session_id": session_id, "drafts": drafts})
+    def run(self, text: str, *, iac_managed: bool = False, session_id: str | None = None, drafts: bool = False,
+            resume=None, on_checkpoint=None) -> PipelineResult:
+        state = self._graph.invoke({"text": text, "iac_managed": iac_managed, "session_id": session_id, "drafts": drafts,
+                                    "resume": resume, "on_checkpoint": on_checkpoint})
         return state["result"]
 
     # ---- 그래프 ----
@@ -110,12 +124,13 @@ class PlanPipeline:
 
     def _plan_node(self, state: _PipelineState) -> dict:
         intake = state["intake"]
-        result = self._agent.run(intake, iac_managed=state["iac_managed"], session_id=state["session_id"], drafts=state["drafts"])
+        result = self._agent.run(intake, iac_managed=state["iac_managed"], session_id=state["session_id"], drafts=state["drafts"],
+                                 resume=state.get("resume"), on_checkpoint=state.get("on_checkpoint"))
         if result.status == "clarify":
             return {"plan_result": result, "result": PipelineResult("clarify", message="계획을 만들려면 아래 내용을 알려 주세요.", intake=intake, plan_result=result, questions=result.questions)}
         if result.status != "plan" or result.plan is None:
             code = result.reasons[0] if result.reasons else "stopped"
-            return {"plan_result": result, "result": PipelineResult("stopped", message=stop_message(code, result.detail), intake=intake, plan_result=result, reasons=result.reasons, detail=result.detail)}
+            return {"plan_result": result, "result": PipelineResult("stopped", message=stop_message(code, result.detail) + _saved_note(result.checkpoint), intake=intake, plan_result=result, reasons=result.reasons, detail=result.detail)}
         return {"plan_result": result}
 
     def _review_node(self, state: _PipelineState) -> dict:

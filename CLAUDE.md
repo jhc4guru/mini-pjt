@@ -10,7 +10,7 @@ DevOps Plan/Apply 웹 에이전트의 개발 지침. 정책이 바뀌면 `SERVIC
 ```
 루트        README.md CLAUDE.md SERVICE.md SPEC.md TASK.md inventory.example.yaml(인벤토리 입력 가이드) Dockerfile .dockerignore requirements*.txt
 app/        코드 (guards, rag, planner, agents, session, executor, observability, web, static)
-knowledge/  직접 작성한 CLI 지식베이스(원본, 버전 관리 대상): cli/{aws,kubectl}, glossary.yaml, SCHEMA.md
+knowledge/  직접 작성한 지식베이스(원본, 버전 관리 대상): cli/{aws,kubectl}, glossary.yaml, SCHEMA.md, scenarios/(반복되는 큰 작업의 조사 목록·phase 골격, D-72)
 data/       실행 중 생성물(색인, DB, 트레이스, 세션 작업 폴더). 지워도 재생성된다. 원본을 두지 않는다
 docs/       DECISIONS.md, IMPLEMENTATION.md + 이후 생기는 문서(런북, 회고 등)
 eval/ tests/   평가셋·스크립트·리포트 / 테스트와 문서 검증(check_docs.py)
@@ -28,6 +28,7 @@ ref/        교육 예제(참고용, 앱이 import하지 않는다)
 | `docs/DECISIONS.md` | 결정과 **이유**, 대안, 번복 이력 (결정을 내리거나 바꿀 때) |
 | `docs/IMPLEMENTATION.md` | 구현 상세: 모듈 구조, 인터페이스 계약, 설계 근거 측정 (구현이 바뀔 때, 코드와 함께) |
 | `knowledge/cli/*` | 앱이 읽는 CLI 지식. 규격은 `knowledge/cli/SCHEMA.md` (명령·서비스를 추가할 때) |
+| `knowledge/scenarios/*` | 반복되는 큰 작업의 조사 명령·phase 골격(게이트·필수 항목)을 사람이 검토해 둔 것. 규격은 `knowledge/scenarios/SCHEMA.md`, 검증은 `tests/test_scenarios.py` (시나리오를 추가·변경할 때, 사용자 검토와 DECISIONS 갱신 필요) |
 
 - **한 곳에 쓰고 링크한다.** 규칙은 `CLAUDE.md`, 요구사항은 `SERVICE.md`, 구현 상세는 `docs/IMPLEMENTATION.md`, 이유는 `docs/DECISIONS.md`, 진행은 `TASK.md`. `SERVICE.md`에는 구현 상세를 쓰지 않고 요약과 링크만 둔다. 문서 사이의 관계 설명은 이 표에만 둔다.
 - `README.md`에는 실제로 동작하는 것만 적는다. 구현 전 기능은 "예정"으로 표시하고, 적은 명령은 실제로 실행해 확인한다. 구조도의 구현 상태(초록/노랑/회색)는 구현이 진행될 때 함께 고치고, 평가 수치는 측정일과 출처를 적으며 측정 전이면 "미측정"으로 둔다(지어내지 않는다).
@@ -58,7 +59,7 @@ ref/        교육 예제(참고용, 앱이 import하지 않는다)
 - `kind: manual` 명령(kubectl exec/attach/port-forward/cp/proxy/debug/edit, iam create-access-key/create-login-profile, aws eks update-kubeconfig)은 서버가 절대 실행하지 않는다(폴백 포함). `create-login-profile`의 `<PASSWORD>`는 자리 표시로만 둔다. 모든 명령은 `CommandGuard.check`를 먼저 통과하고, 실행기는 `execution_policy.assert_server_executable` 없이 실행하지 않으며, 에이전트의 읽기 도구는 `assert_read_only_tool_call`을 거친다.
 
 **에이전트와 실행기**
-- 에이전트는 제안만 한다. 도구는 읽기 전용(문서 검색, 인벤토리 조회, 읽기 명령 실행)이고 호출·단계·토큰·시간 상한을 넘으면 중단한다. 같은 호출을 같은 인자로 상한(2회)을 넘겨 반복하면 처음 2번은 실행하지 않고 오류로 알리며 그 뒤에는 중단한다(D-45). 모델의 도구 호출 인자에 민감값 형태가 있으면 실행하지 않고 오류로 돌려 최대 2번 고치게 하고(누출된 입력은 대화에 남기지 않는다), 모델이 글로 쓴 누출은 바로 중단한다. 리뷰어 요약은 참고용이다.
+- 에이전트는 제안만 한다. 도구는 읽기 전용(문서 검색, 인벤토리 조회, 읽기 명령 실행)이고 호출·단계·토큰·시간 상한을 넘으면 중단한다(도구 호출은 기본 `batch` 방식에서 조사 30·phase당 10·합계 80회, 이전 `PLANNER_MODE=loop`에서는 요청 전체 30회, 나머지 상한은 요청 전체, D-69·D-73). `batch`는 모델이 조회 목록을 한 번에 내고 서버가 항목마다 같은 가드·읽기 전용 관문으로 실행한다. 같은 호출을 같은 인자로 상한(2회)을 넘겨 반복하면 처음 2번은 실행하지 않고 오류로 알리며 그 뒤에는 중단한다(D-45). 계획 생성이 중단되면 마스킹된 진행 상태(조사 요약·윤곽·완료 phase)를 저장해 같은 요청의 재시도가 이어서 하게 하되(D-68), 불러올 때 요청 키·누출 검사·`build_plan`(명령 가드 포함) 재검증을 통과하지 못하면 버리고 처음부터 한다. 모델의 도구 호출 인자에 민감값 형태가 있으면 실행하지 않고 오류로 돌려 최대 2번 고치게 하고(누출된 입력은 대화에 남기지 않는다), 모델이 글로 쓴 누출은 바로 중단한다. 리뷰어 요약은 참고용이다.
 - mock 모드는 실제 AWS로 나가지 않는다. 엔드포인트(`AWS_ENDPOINT_URL`)와 더미 키(`testing`)를 명시적으로 지정하고, 실제 자격증명은 이 단계에서 사용·저장하지 않는다. 실행기는 별도 프로세스·환경으로 돌리고 `.env`의 실제 키를 상속하지 않는다(요청마다 임시 HOME·kubeconfig). 모든 실행은 `Executor.execute` 한 곳을 거치며(서브클래스는 `_run`만 구현) 실행하는 쪽에서 가드를 한 번 더 통과시킨다. 실행기는 인터페이스(`executor/base.py`)로 분리하고, 요청은 직렬화 가능한 `ExecutionRequest`로 다루며 kubeconfig·자격증명은 요청(세션)별로 격리해 서버 전역 상태를 바꾸지 않는다. 실행 위치(이 서버 직접 vs 권한 서버에 요청)는 미정이다(D-28). 어느 쪽이든 가드 통과와 `assert_server_executable`은 실행하는 쪽에서 다시 확인한다.
 
 **가드**

@@ -194,7 +194,12 @@ class SessionService:
         masker = self.masker_for(sid)
         drafts_mode = self._drafts_mode(sid)                       # 결과를 초안으로만 덧붙일지(빈 plan이거나 연습장에 절차가 있을 때)
         # 어느 세션이든 에이전트는 빠진 값을 되묻지 않고 기본값으로 만든다: 결과는 연습장에서 고칠 수 있다(D-47)
-        res = self._pipeline_factory(masker, sid).run(text, iac_managed=bool(sess["iac_managed"]), session_id=sid, drafts=True)
+        res = self._pipeline_factory(masker, sid).run(text, iac_managed=bool(sess["iac_managed"]), session_id=sid, drafts=True,
+                                                       resume=self._load_checkpoint(sid), on_checkpoint=lambda cp: self.store.set_meta(sid, "plan_checkpoint", cp.to_json()))
+        if res.status != "stopped":
+            self.store.set_meta(sid, "plan_checkpoint", "")                      # 끝났거나(plan) 되물음·거절이면 이어할 것이 없다
+        elif res.plan_result is not None and res.plan_result.checkpoint is not None:
+            self.store.set_meta(sid, "plan_checkpoint", res.plan_result.checkpoint.to_json())
         self._trace_pipeline(sid, res)
         meta = {"status": res.status, "message": res.message, "questions": list(res.questions), "reasons": list(res.reasons), "detail": list(res.detail),
                 "interpretations": list(res.intake.interpretations) if res.intake else []}
@@ -222,6 +227,11 @@ class SessionService:
         self._persist(sid)
         self._notify(sid)
         return res
+
+    def _load_checkpoint(self, sid: str):
+        """중단된 계획 생성의 체크포인트(D-68). 요청 키가 다르면 에이전트가 버린다."""
+        from app.planner.checkpoint import PlanCheckpoint
+        return PlanCheckpoint.from_json(self.store.get_meta(sid, "plan_checkpoint"))
 
     def _trace_pipeline(self, sid: str, res) -> None:
         """계획 생성 결과를 트레이스에 남긴다(상태·원인 코드·수정 시도 횟수·계획 해시만. 요청·계획 내용은 없다)."""

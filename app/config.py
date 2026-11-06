@@ -32,6 +32,14 @@ def embed_model_id() -> str:
     return os.environ.get("EMBED_MODEL", _DEFAULT_EMBED_MODEL)
 
 
+def planner_mode() -> str:
+    """계획 조사 방식(D-69): `loop`(기존: 모델이 도구를 하나씩 호출) | `batch`(일괄 조사 + 단계별 예산). 기본은 `batch`(D-73, 평가셋 채점 뒤 전환)이고 `loop`는 비교·안전망으로 남겨 둔다. 가드를 켜고 끄는 값이 아니다(두 방식 모두 가드·한도가 같다)."""
+    mode = (os.environ.get("PLANNER_MODE") or "batch").strip().lower()
+    if mode not in ("loop", "batch"):
+        raise RuntimeError("환경변수 PLANNER_MODE는 loop 또는 batch여야 합니다.")
+    return mode
+
+
 def model_id(role: str) -> str:
     """role: MAIN | SUB | READ"""
     key = f"{role.upper()}_MODEL"

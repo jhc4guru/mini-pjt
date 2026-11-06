@@ -63,6 +63,10 @@ class Limits:
     max_tokens: int = 700_000
     max_seconds: float = 600.0
     max_repeats: int = 2           # 같은 도구·같은 인자 호출을 이 횟수까지만 허용
+    # 단계별 예산(D-69, 계획 방식 `batch`에서만 쓴다. `loop`는 위의 `max_tool_calls` 하나를 요청 전체가 공유한다)
+    investigation_calls: int = 30  # 조사 단계의 도구 호출
+    phase_calls: int = 10          # phase 하나를 쓰는 단계의 보충 조회 호출
+    max_total_tool_calls: int = 80  # 단계별 예산이 있어도 요청 전체가 넘을 수 없는 합계
 
 
 class AgentBudget:
@@ -78,6 +82,9 @@ class AgentBudget:
         self.tokens = 0
         self.repeat_notices = 0
         self._seen: dict[str, int] = {}
+        self._staged = False
+        self._stage_cap: int | None = None
+        self._stage_calls = 0
 
     def _check_time(self) -> None:
         if self._clock() - self._start > self.limits.max_seconds:
@@ -88,8 +95,12 @@ class AgentBudget:
             raise ToolNotAllowed(f"허용되지 않은 도구: {name}")
         self._check_time()
         self.tool_calls += 1
-        if self.tool_calls > self.limits.max_tool_calls:
+        if self.tool_calls > (self.limits.max_total_tool_calls if self._staged else self.limits.max_tool_calls):
             raise BudgetExceeded("tool_calls_exceeded")
+        if self._stage_cap is not None:
+            self._stage_calls += 1
+            if self._stage_calls > self._stage_cap:
+                raise BudgetExceeded("tool_calls_exceeded", detail="stage")
         sig = name + json.dumps(args, sort_keys=True, default=str, ensure_ascii=False)
         self._seen[sig] = self._seen.get(sig, 0) + 1
         if self._seen[sig] > self.limits.max_repeats:
@@ -97,6 +108,19 @@ class AgentBudget:
                 self.repeat_notices += 1
                 raise RepeatedCall(name)
             raise BudgetExceeded("repeated_call", detail=name)
+
+    def begin_stage(self, max_calls: int) -> None:
+        """단계별 도구 호출 예산을 시작한다(D-69). 이 단계의 호출은 `max_calls`회까지이고, 요청 전체 합계(`max_total_tool_calls`)도 넘을 수 없다.
+        토큰·추론 단계·시간·반복 호출 상한은 단계와 무관하게 요청 전체에 적용된다."""
+        self._staged = True
+        self._stage_cap = max(0, int(max_calls))
+        self._stage_calls = 0
+
+    def remaining_tool_calls(self) -> int:
+        left = (self.limits.max_total_tool_calls if self._staged else self.limits.max_tool_calls) - self.tool_calls
+        if self._stage_cap is not None:
+            left = min(left, self._stage_cap - self._stage_calls)
+        return max(0, left)
 
     def before_step(self) -> None:
         self._check_time()

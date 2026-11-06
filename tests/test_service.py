@@ -23,7 +23,7 @@ class FakePipeline:
         self._plan, self._status = plan, status
         self.seen = []
 
-    def run(self, text, *, iac_managed=False, session_id=None, drafts=False):
+    def run(self, text, *, iac_managed=False, session_id=None, drafts=False, resume=None, on_checkpoint=None):
         self.seen.append(text)
         self.drafts = drafts
         if self._status != "plan":
@@ -352,6 +352,37 @@ def test_a_stopped_generation_can_be_retried_with_the_same_content(tmp_path, chu
     sent = box.pipelines[-1].seen[0]
     assert "다시 시도" not in sent and sent.count("[추가 정보]") == 0                                   # 같은 요청이 그대로 가고, 표시 문구는 모델로 가지 않는다
     assert box.svc.handle(sid, "alice", {"type": "retry_generation"})["code"] == "retry_not_expected"        # 계획이 만들어진 뒤에는 받지 않는다
+    box.store.close(); box.maps.close()
+
+
+def test_stop_checkpoint_is_saved_handed_to_the_retry_and_cleared_on_success(tmp_path, chunks, snapshot):
+    import dataclasses
+    from app.planner.checkpoint import PlanCheckpoint
+    box = build(tmp_path, chunks, snapshot, statuses=["stopped", "plan"])
+    cp = PlanCheckpoint("k", {"summary": "s", "phases": [{"id": "p1", "title": "t"}]}, (), {}, {})
+    make, resumes = box.svc._pipeline_factory, []
+
+    def factory(masker, sid):
+        p = make(masker, sid)
+        real = p.run
+
+        def run(text, **kw):
+            resumes.append(kw.get("resume"))
+            res = real(text, **kw)
+            if res.status == "stopped":
+                res = dataclasses.replace(res, plan_result=PlanResult("stopped", reasons=("steps_exceeded",), checkpoint=cp))
+            return res
+        p.run = run
+        return p
+    box.svc._pipeline_factory = factory
+    c = box.svc.create("alice", "이어하기 작업", REQUEST)
+    sid = c["session_id"]
+    box.svc.generate_plan(sid, REQUEST)
+    assert resumes[0] is None and PlanCheckpoint.from_json(box.store.get_meta(sid, "plan_checkpoint")) == cp      # 중단되면 저장한다
+    assert box.svc.handle(sid, "alice", {"type": "retry_generation"})["ok"]
+    assert wait_for(lambda: box.svc.view(sid, "alice")["pipeline"]["status"] == "plan")
+    assert resumes[1] == cp                                                                                     # 다시 시도에 넘겼다
+    assert not box.store.get_meta(sid, "plan_checkpoint")                                                      # 성공하면 지운다
     box.store.close(); box.maps.close()
 
 

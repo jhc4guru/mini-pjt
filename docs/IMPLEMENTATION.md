@@ -66,6 +66,26 @@
 - `LLMClient.chat`: 여러 턴·도구 호출 대화(LangChain 메시지). 발송 전에 시스템·메시지·도구 결과·도구 호출 인자·도구 정의 전체를 누출 검사하고, MAIN→SUB 폴백과 토큰 합산은 `complete`와 같은 경로다. 출력 한도 8,192 토큰.
 - 시스템 프롬프트는 역할·입력(마스킹)·고정 사실(서버·노드=EC2, Pod, 운영 환경)·도구와 한도·작업 순서·step 규칙·서버 오류 코드·출력 형식으로 구성된다. 금지 옵션, `--timeout` 필수 명령, 한도, step 상한은 가드 상수에서 채우고 테스트가 대조한다. manual 명령 목록은 문서와 대조한다.
 
+### 일괄 조사와 단계별 예산 (`PLANNER_MODE=batch`, D-69)
+- 설정: `config.planner_mode()`(`batch` 기본(D-73) | `loop`, 그 밖의 값은 오류). `web/factory.py`가 `PlanningAgent(mode=)`로 넘긴다.
+- `agent_limits.Limits`: `investigation_calls=30`, `phase_calls=10`, `max_total_tool_calls=80`(batch용). `AgentBudget.begin_stage(n)`을 부르면 단계 예산과 합계 상한(80)이 적용되고(`remaining_tool_calls()`로 남은 양 조회), 부르지 않으면(loop) `max_tool_calls=30` 하나를 요청 전체가 공유한다. 토큰·추론 단계·시간·반복 상한은 단계와 무관하다.
+- `ToolLoop.stage(..., tool_names=, compact_from=, compact_names=)`: 단계마다 모델에 보이는 도구를 정하고(보이지 않는 도구 호출은 `wrong_stage`로 거절, 실행 안 함), 조사 대화 전체를 윤곽 수락 때 압축한다. `record_read`는 읽기 결과 기억을 공통화한다.
+- `PlanningAgent._investigate_and_outline`: 조사 라운드(≤3) 반복 — 모델이 `submit_investigation`을 내면 `_run_investigation`이 중복 제거 후 `ReadToolbox.call`로 문서 검색→읽기 명령→인벤토리 순으로 실행하고(예산 남은 만큼만), 결과(`<untrusted_data>` 틀)를 한 메시지로 돌려준다. 예산 소진·라운드 소진이면 조사 통로를 닫는다. 라운드마다 체크포인트를 저장한다. 인벤토리 결과는 `reads_seen["inventory:<카테고리>"]`에 저장해 압축 뒤에도 요약으로 다시 줄 수 있다. phase 단계마다 `begin_stage(phase_calls)`.
+- 프롬프트: `build_system_prompt(limits, mode)`. `batch`는 도구·작업 순서 절만 일괄 조사용으로 바꾼 전체본이고, 실제 호출에는 단계별본을 쓴다(D-70): `batch_investigation`(조사·윤곽 단계, step 작성 전용 규칙·오류 코드·출력 형식 제외, 약 33% 짧음)과 `batch_phase`(phase 단계, 조사 안내 제외, 약 16% 짧음). `ToolLoop.stage(system=)`로 단계마다 바꾼다. **기본은 끔**(`PlanningAgent(stage_prompts=False)`): 측정에서 phase 단계 모델 호출이 두 배가 되어 번복했다(D-70). 이때 batch는 단계 구분 없는 전체본 하나를 쓴다. `loop`는 하나의 프롬프트를 계속 쓴다.
+
+- phase 사전 검색(D-71): `PlanningAgent._phase_docs`가 phase 제목·목적으로 `search_docs`를 두 번(6개·3개) 실행해 문서 본문을 phase 요청 뒤에 싣고(이미 보여 준 문서 제외, `docs_seen`·`_docs_shown` 갱신), phase가 수락되면 `loop.messages`의 그 요청을 본문 없는 텍스트로 바꾼다. 실패는 빈 문자열로 폴백(한도·누출 예외는 전파). 계측: `PlanResult.stage_log`(모델 호출마다 단계 이름), `tool_log`(단계 이름, 도구 이름; 사전 검색은 `phase_pre`).
+
+### 시나리오 묶음 (`app/planner/scenarios.py`, `knowledge/scenarios/`, D-72)
+- `load_scenarios()`(앱 시작 때 `web/factory.py`가 읽음, 규격 오류는 `ScenarioError`), `match_scenario(scenarios, masked_text, services)` → `ScenarioMatch(scenario, params)`(`fill()`로 `{param}` 치환, `commands()`로 필요한 param이 있는 조사 명령만), `missing_expectations(phase, steps)` → `scenario_missing:<phase>:<n>` 목록.
+- `PlanningAgent(scenarios=)`: `batch`에서 매칭되면 `_scenario_start`가 조사 명령을 `_run_investigation(final=True)`로 일괄 실행하고(조사 단계 예산 사용) 윤곽을 시나리오에서 만들어 대화를 "윤곽 수락됨" 상태로 둔다(모델 호출 없음, 체크포인트 저장). phase 요청에 `_scenario_note`(안내 + 필수 항목)를 붙이고 `_phase_docs`가 시나리오 `docs` 질의(질의당 2개)로 본문을 싣는다. `on_phase`가 `build_plan` 검증 뒤 `expect`를 검사한다. `loop`와 매칭되지 않는 요청은 이전 흐름 그대로.
+- 시나리오가 맞은 요청은 phase 단계 핸들러에 `request_clarification`을 더해 되물으면 `clarify` 결과로 끝낸다. 적용 중인 시나리오: `eks-upgrade`(`tag-update`는 `docs/scenarios-draft/`에 초안으로만 있고 앱이 읽지 않는다).
+- phase 사전 검색은 질의 결과를 `_pre_cache`로 재사용한다(여러 phase가 같은 질의를 써도 반복 호출 상한에 걸리지 않음).
+
+### 계획 생성 체크포인트 (`app/planner/checkpoint.py`, D-68)
+- `PlanningAgent.run(..., resume=, on_checkpoint=)`. 윤곽 수락·phase 수락마다 `on_checkpoint(PlanCheckpoint)`를 부르고(실패는 무시), `stopped` 결과에는 `PlanResult.checkpoint`가 붙는다. `PlanCheckpoint` = 요청 키(`request_key(마스킹된 요청, iac)`), 윤곽, 완료 phase, 찾은 문서(id→명령·종류), 읽기 결과 요약(명령→요약 600자). JSON 직렬화(`to_json`/`from_json`, 형식이 틀리면 None).
+- 이어받기(`_restore`): 키 일치 → `leak_kinds` 통과 → 스키마 재검증 → phase id가 윤곽의 앞부분과 일치 → `build_plan`으로 이어받은 phase 전체 재검증, 하나라도 실패하면 None(처음부터). 성공하면 대화를 "과제 + 수락된 윤곽" 상태로 복원하고(`compact`한 평소 모양과 같다) 첫 phase 요청에 윤곽·문서·읽기 요약을 다시 싣는다. 조사 단계 체크포인트(윤곽 없음)는 과제 텍스트 뒤에 찾은 문서·읽기 요약을 붙인다.
+- 서비스: `generate_plan`이 세션 메타 `plan_checkpoint`를 읽어 넘기고, 콜백으로 저장하며, `stopped`가 아니면 지운다. `PlanPipeline`은 resume·on_checkpoint를 에이전트로 전달하고 중단 안내에 저장된 진행(`n/m phase`)을 덧붙인다.
+
 ### 리뷰어 (`app/planner/review.py`, D-35)
 - 서버 규칙(`build_review`): phase별 체크리스트(`irreversible`, `disruption_likely/possible`, `replaces`, `no_gate`, `no_rollback`, `no_preconditions`, `fallback_step`, `risk_flag`(HIGH_FLAGS), 정보성 `manual_step`·`iac_step`·`auto_step`)와 위험 등급(high: 되돌릴 수 없음·위험 플래그·폴백 step, medium: 그 밖의 경고나 후처리 경고, low). 모델은 관여하지 않는다.
 - 요약(`Reviewer.review`): 서버가 만든 사실 JSON만 SUB 모델에 주고 headline·summary·attention·phase_notes를 받는다. 스키마 검증(2회 재시도), 누출·모르는 플레이스홀더 검사를 통과해야 하고, 실패하거나 모델을 쓸 수 없으면 요약 없이 체크리스트만 돌려준다. 모델은 등급·체크리스트를 바꿀 수 없다. 화면(T8)은 서버 체크리스트와 등급을 요약과 함께 보인다.

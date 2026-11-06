@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app import config
+from app.planner.scenarios import load_scenarios
 from app.agents.tools import ReadToolbox
 from app.executor.adapter import ReadRunnerAdapter
 from app.executor.mock import MockExecutor
@@ -77,10 +78,14 @@ def build_service(*, data_dir: Path | None = None, retriever=None, usage_path: P
         return ReadToolbox(masker=masker, guard=guard, retriever=retriever, runner=ReadRunnerAdapter(executor, guard, masker, session_id=sid),
                            budget=budget, audit=audit, session_id=sid, tracer=tracer)
 
+    planner_mode = config.planner_mode()                                           # 계획 조사 방식(D-69). 잘못된 값이면 시작 때 오류
+    scenarios = load_scenarios()                                                  # 시나리오 묶음(D-72, batch 방식에서만 쓴다). 파일이 규격에 맞지 않으면 시작 때 오류로 알린다
+
     def pipeline_factory(masker: Masker, sid: str) -> PlanPipeline:
         budget = AgentBudget()
         llm = LLMClient(masker, budget=budget, usage=usage, tracer=tracer, prompt_cache=True)      # 도구 루프(계획·실패 분석)만 프롬프트 캐싱을 쓴다(D-54)
-        return PlanPipeline(Intake(llm, masker, audit=audit), PlanningAgent(llm, toolbox(masker, sid, budget), guard, masker, budget, audit=audit),
+        return PlanPipeline(Intake(llm, masker, audit=audit), PlanningAgent(llm, toolbox(masker, sid, budget), guard, masker, budget, audit=audit, mode=planner_mode,
+                                                                                          scenarios=scenarios),
                             Reviewer(llm, masker, audit=audit), by_id)
 
     def analyzer_factory(masker: Masker) -> FailureAnalyzer:

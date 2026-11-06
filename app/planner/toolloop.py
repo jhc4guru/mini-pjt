@@ -74,6 +74,9 @@ class ToolLoop:
         self._max_tokens, self._max_repairs, self._max_nudges, self._session = max_tokens, max_repairs, max_nudges, session_id
         self._hint = truncated_hint
         self._tool_by_name = {t.name: t for t in tools}
+        self._active_tools: list[BaseTool] = list(tools)          # 이번 단계에서 모델에 보이는 도구(`stage(tool_names=)`)
+        self._active_names: frozenset[str] | None = None
+        self._active_system = system                              # 이번 단계의 시스템 프롬프트(`stage(system=)`, 없으면 기본)
         self.messages: list[BaseMessage] = []
         self.pending: list[ToolMessage] = []
         self.roles: list[str] = []
@@ -81,6 +84,9 @@ class ToolLoop:
         self.cache_log: list[tuple[int, int]] = []       # 호출별 (캐시 읽기, 캐시 쓰기) 토큰
         self.repairs = 0
         self.repair_log: list[str] = []
+        self.label = ""                                      # 지금 단계의 이름(계측용: 모델 호출·도구 호출을 단계별로 센다)
+        self.stage_log: list[str] = []                       # 모델 호출마다 단계 이름
+        self.tool_log: list[tuple[str, str]] = []            # 읽기 도구 호출마다 (단계 이름, 도구 이름)
         self.docs_seen: dict[str, tuple[str, str]] = {}      # `search_docs`로 찾은 문서 명령 id → (명령, 종류). 단계를 압축해도 요약으로 다시 줄 수 있다
         self.reads_seen: dict[str, str] = {}                 # `run_read_command`로 읽은 (마스킹된 명령 → 정리된 출력). 단계를 압축하면 대화에서 사라지므로 요약으로 다시 줄 수 있게 둔다(같은 조회의 반복 방지)
         self._unsafe: dict[str, list[str]] = {}              # 가장 최근 모델 응답의 도구 호출 인자 누출(호출 id → 종류)
@@ -107,10 +113,11 @@ class ToolLoop:
 
     def _model_node(self, state: StageState) -> dict:
         self._budget.before_step()
-        res = self._llm.chat(self._role, state["messages"], system=self._system, tools=self._tools,
+        res = self._llm.chat(self._role, state["messages"], system=self._active_system, tools=self._active_tools,
                              max_tokens=self._max_tokens, session_id=self._session, cache=True)
         self.roles.append(f"{res.requested_role}->{res.actual_role}")
         self.token_log.append((res.input_tokens, res.output_tokens))
+        self.stage_log.append(self.label)
         self.cache_log.append((res.cache_read_tokens, res.cache_write_tokens))
         text = res.text
         text_kinds = leak_kinds(flatten_text(None, [HumanMessage(content=text)]), self._masker)
@@ -146,6 +153,11 @@ class ToolLoop:
         accepted_call: dict | None = None
         for call in last.tool_calls:
             name, inp = call["name"], call.get("args") or {}
+            if self._active_names is not None and name not in self._active_names and call["id"] not in self._unsafe:      # 이 단계에서 보여 주지 않은 도구는 실행하지 않는다
+                repairs += 1
+                self.repairs += 1
+                results.append(tool_result(call, {"error": ["wrong_stage" if name in READ_ONLY_TOOLS or name in self._submit_tools else "unknown_tool"]}, False))
+                continue
             if call["id"] in self._unsafe:
                 repairs += 1
                 self.repairs += 1
@@ -157,12 +169,8 @@ class ToolLoop:
                 continue
             if name in READ_ONLY_TOOLS:
                 out = self._tool_by_name[name].invoke(inp)         # 상한 초과는 예외로 전파된다
-                if name == "search_docs" and out.get("ok"):
-                    for h in out.get("hits", []):
-                        self.docs_seen[h["id"]] = (h["command"], h["kind"])
-                if name == "run_read_command" and out.get("ok"):
-                    self.reads_seen.pop(out["command"], None)      # 같은 명령을 다시 읽으면 최신 결과로 바꾸고 순서를 뒤로 보낸다
-                    self.reads_seen[out["command"]] = out["output"]
+                self.record_read(name, out)
+                self.tool_log.append((self.label, name))
                 results.append(tool_result(call, out, bool(out.get("ok"))))
             elif name in handlers and accepted is None:
                 ok, value = handlers[name](inp)
@@ -197,9 +205,25 @@ class ToolLoop:
     def usage(self) -> dict:
         return self._budget.usage()
 
-    def stage(self, handlers: dict[str, Callable[[dict], tuple[bool, Any]]], *, compact: bool = False) -> tuple[str, Any]:
-        """제출 통로가 수락될 때까지 진행한다. 성공하면 (도구 이름, 핸들러가 돌려준 값)."""
+    def record_read(self, name: str, out: dict) -> None:
+        """읽기 도구 결과를 기억한다(단계를 압축해도 요약으로 다시 줄 수 있게, 같은 조회를 되풀이하지 않게)."""
+        if name == "search_docs" and out.get("ok"):
+            for h in out.get("hits", []):
+                self.docs_seen[h["id"]] = (h["command"], h["kind"])
+        if name == "run_read_command" and out.get("ok"):
+            self.reads_seen.pop(out["command"], None)      # 같은 명령을 다시 읽으면 최신 결과로 바꾸고 순서를 뒤로 보낸다
+            self.reads_seen[out["command"]] = out["output"]
+
+    def stage(self, handlers: dict[str, Callable[[dict], tuple[bool, Any]]], *, compact: bool = False, compact_from: int | None = None,
+              compact_names: frozenset[str] | None = None, tool_names: frozenset[str] | None = None, system: str | None = None) -> tuple[str, Any]:
+        """제출 통로가 수락될 때까지 진행한다. 성공하면 (도구 이름, 핸들러가 돌려준 값).
+
+        `tool_names`: 이 단계에서 모델에 보여 주고 실행을 허용할 도구(없으면 전부). `compact_from`: 압축할 대화의 시작 위치(없으면 이 단계의 시작).
+        `compact_names`: 이 이름의 제출이 수락됐을 때만 압축한다(없으면 어떤 제출이든)."""
         stage_start = len(self.messages)
+        self._active_names = None if tool_names is None else frozenset(tool_names)
+        self._active_system = system or self._system
+        self._active_tools = [t for t in self._tools if tool_names is None or t.name in tool_names]
         state = self._graph.invoke(
             {"messages": list(self.messages), "repairs": 0, "nudges": 0, "accepted": None, "accepted_call": None, "pending": []},
             {"configurable": {"handlers": handlers}, "recursion_limit": GRAPH_RECURSION_LIMIT},
@@ -207,9 +231,10 @@ class ToolLoop:
         self.messages = list(state["messages"])
         self.pending = list(state["pending"])
         accepted, accepted_call = state["accepted"], state["accepted_call"]
-        if compact and accepted_call is not None:
+        if (compact or compact_from is not None) and accepted_call is not None and (compact_names is None or accepted[0] in compact_names):
+            start = stage_start if compact_from is None else compact_from
             kept = AIMessage(content="", tool_calls=[{"name": accepted_call["name"], "args": {"accepted_steps": accepted[1]}, "id": accepted_call["id"], "type": "tool_call"}])
-            self.messages[stage_start:] = [kept]
+            self.messages[start:] = [kept]
             self.pending = [tool_result(accepted_call, {"accepted": True}, True)]
         return accepted
 
